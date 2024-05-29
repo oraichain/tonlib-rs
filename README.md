@@ -4,33 +4,42 @@ Rust SDK for [The Open Network](https://ton.org/)
 
 ## Features
 
-* Rust SDK for The Open Network
-* Using `tonlibjson` as data provider
-* Support parsing and generation of Cells methods for more convenient interaction with data structures
-* Support of Wallet versions (3, 3 revision 2, 4 revision 2)
-* Derive wallet address
-* Support of TON Mnemonics
-* NaCL-compatible Ed25519 signing of transactions
-* Support jetton functions: getting of jetton data and wallet address for jetton
-* Support internal and external jetton metadata loading
-* Connection pooling & retries support for better server-level interaction
-* Support of IPFS jetton metadata
+- Rust SDK for The Open Network
+- Using `tonlibjson` as data provider
+- Support parsing and generation of Cells methods for more convenient interaction with data structures
+- Support of Wallet versions (3, 3 revision 2, 4 revision 2)
+- Derive wallet address
+- Support of TON Mnemonics
+- NaCL-compatible Ed25519 signing of transactions
+- Support jetton functions: getting of jetton data and wallet address for jetton
+- Support internal and external jetton metadata loading
+- Connection pooling & retries support for better server-level interaction
+- Support of IPFS jetton metadata
 
 ## Dependencies
 
-`tonlib-sys` - https://github.com/ston-fi/tonlib-sys
+`tonlib-sys` - https://github.com/ston-fi/tonlib-sys. Need to clone it and build locally. Otherwise, the build will fail for some reason
 
 ## Prerequisites
 
 For Linux:
+
 ```shell
 sudo apt install build-essential cmake libsodium-dev libsecp256k1-dev lz4 liblz4-dev
 ```
 
 For macOS:
+
 ```shell
 brew install --cask mactex
 brew install readline secp256k1 ccache pkgconfig cmake libsodium
+
+# also add the following environment variables into .zprofile:
+# LLVM_PATH is your installed LLVM. Mine is located in /opt/homebrew/opt/llvm/
+export CC="$LLVM_PATH/bin/clang"
+export CXX="$LLVM_PATH/bin/clang++"
+
+# Tips: If you cannot build, you should read the following sh file to know what needs to be installed: https://github.com/ton-blockchain/ton?tab=readme-ov-file#macos-11-12-x86-64-aarch64
 ```
 
 ### Build library
@@ -60,7 +69,7 @@ use tonlib;
 
 Creating a `Cell` and writing data to it:
 
-``` rust
+```rust
 use anyhow::anyhow;
 use tonlib::address::TonAddress;
 use tonlib::cell::CellBuilder;
@@ -80,7 +89,7 @@ let cell = writer
 }
 ```
 
- Reading data from a `Cell`:
+Reading data from a `Cell`:
 
 ```rust
 use tonlib::cell::Cell;
@@ -115,8 +124,6 @@ Ok(())
 }
 ```
 
-
-
 `TonClient::set_log_verbosity_level(2);` sets the logging level.
 
 By default, the connection is made to mainnet. But you can also specify a test network when creating the client:
@@ -140,7 +147,6 @@ async fn create_client_with_conn_params()-> anyhow::Result<()>{
     Ok(())
 }
 ```
-
 
 After creating the client, you can call methods on the TON blockchain:
 
@@ -206,7 +212,7 @@ use tonlib::address::TonAddress;
 use tonlib::client::TonClient;
 use crate::tonlib::client::TonClientInterface;
 
-async fn get_state()-> anyhow::Result<()>{  
+async fn get_state()-> anyhow::Result<()>{
     let client = TonClient::builder().build().await?;
     let address = TonAddress::from_base64_url(
         "EQB3ncyBUTjZUA5EnFKR5_EnOMI9V1tTEAAPaiU71gc4TiUt-",
@@ -218,19 +224,17 @@ async fn get_state()-> anyhow::Result<()>{
 }
 ```
 
-
-
 ### Working with contracts and jettons
 
 Methods for working with tokens and wallets:
 
-``` rust
+```rust
 use tonlib::client::TonClient;
 use tonlib::contract::TonContractFactory;
 use crate::tonlib::contract::JettonMasterContract;
 use crate::tonlib::contract::JettonWalletContract;
 
-async fn method_call() -> anyhow::Result<()> { 
+async fn method_call() -> anyhow::Result<()> {
     let client = TonClient::builder().build().await?;
     let contract_factory = TonContractFactory::builder(&client).build().await?;
     let master_contract = contract_factory.get_contract(
@@ -255,11 +259,11 @@ use tonlib::contract::JettonMasterContract;
 use tonlib::meta::JettonMetaLoader;
 use tonlib::meta::LoadMeta;
 
-async fn load_meta() -> anyhow::Result<()> { 
+async fn load_meta() -> anyhow::Result<()> {
     let client = TonClient::builder().build().await?;
     let contract_factory = TonContractFactory::builder(&client).build().await?;
     let contract =
-        contract_factory.get_contract(&"EQB-MPwrd1G6WKNkLz_VnV6WqBDd142KMQv-g1O-8QUA3728".parse()?); 
+        contract_factory.get_contract(&"EQB-MPwrd1G6WKNkLz_VnV6WqBDd142KMQv-g1O-8QUA3728".parse()?);
     let jetton_data = contract.get_jetton_data().await?;
     let loader = JettonMetaLoader::default()?;
     let content_res = loader.load(&jetton_data.content).await?;
@@ -268,14 +272,13 @@ Ok(())
 }
 ```
 
-
 Get the wallet address for the token:
 
 ```rust
 use tonlib::address::TonAddress;
 use tonlib::client::TonClient;
 use tonlib::contract::TonContractFactory;
-use tonlib::contract::JettonMasterContract; 
+use tonlib::contract::JettonMasterContract;
 
 async fn get_wallet_address() -> anyhow::Result<()> {
 
@@ -312,6 +315,7 @@ async fn create_key_pair() -> anyhow::Result<()> {
 }
 
 ```
+
 And now you are ready to send transfer messages to TON blockchain.
 
 Create a jetton transfer:
@@ -411,7 +415,7 @@ async fn create_simple_transfer() -> anyhow::Result<()> {
         )?;
     let key_pair = mnemonic.to_key_pair()?;
     let seqno =  30000000;
-    
+
 
     let client = TonClient::default().await?;
     let wallet = TonWallet::derive_default(WalletVersion::V4R2, &key_pair)?;
@@ -433,6 +437,7 @@ async fn create_simple_transfer() -> anyhow::Result<()> {
 ```
 
 ## Cross-compilation
+
 In order to cross-compile for specific cpu microachitecture set environment variable `TARGET_CPU_MARCH` to the required. Supported values are listen in https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html
 
 ## Contributing
@@ -440,4 +445,5 @@ In order to cross-compile for specific cpu microachitecture set environment vari
 If you want to contribute to this library, please feel free to open a pull request on GitHub.
 
 ## License
+
 This library is licensed under the MIT license. See the LICENSE file for details. -->
