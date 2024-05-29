@@ -190,9 +190,10 @@ impl TryFrom<&String> for TvmStackEntry {
         let bit_len = bytes.len() * 8;
         // todo: support reference and snake format
         let cell = Cell {
-            data: bytes,
+            data: bytes.clone(),
             bit_len,
             references: vec![],
+            cell_type: bytes[0], // first byte is cell type
         };
         Ok(TvmStackEntry::Slice(CellSlice::full_cell(cell)?))
     }

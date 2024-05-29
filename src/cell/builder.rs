@@ -272,10 +272,12 @@ impl CellBuilder {
                     ref_count
                 )));
             }
+            let cell_type = vec[0];
             Ok(Cell {
-                data: vec.clone(),
+                data: vec.to_vec(),
                 bit_len,
                 references: self.references.clone(),
+                cell_type,
             })
         } else {
             Err(TonCellError::CellBuilderError(

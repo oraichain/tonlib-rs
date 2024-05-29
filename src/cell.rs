@@ -43,6 +43,7 @@ pub struct Cell {
     pub data: Vec<u8>,
     pub bit_len: usize,
     pub references: Vec<ArcCell>,
+    pub cell_type: u8,
 }
 
 impl Cell {
@@ -341,6 +342,181 @@ impl Cell {
 
     pub fn to_arc(self) -> ArcCell {
         Arc::new(self)
+    }
+
+    pub fn load_ref_if_exist<F, T>(
+        &self,
+        ref_index: &mut usize,
+        parse_option: Option<F>,
+    ) -> Result<(Option<T>, Option<&Cell>), TonCellError>
+    where
+        F: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError>,
+    {
+        let reference = self.reference(ref_index.to_owned())?;
+        *ref_index += 1;
+        let mut parser = reference.parser();
+        println!("ref index: {:?}", ref_index);
+        println!("reference cell type: {:?}", reference.cell_type);
+        if reference.cell_type != CellType::PrunnedBranchCell as u8 && parse_option.is_some() {
+            let parse = parse_option.unwrap();
+            let res = parse(&reference, &mut 0usize, &mut parser)?;
+            return Ok((Some(res), None));
+        } else if reference.cell_type == CellType::PrunnedBranchCell as u8 {
+            return Ok((None, Some(reference)));
+        }
+        Err(TonCellError::cell_parser_error("Load ref not supported"))
+    }
+
+    pub fn load_ref_if_exist_without_self<F, T>(
+        &self,
+        ref_index: &mut usize,
+        parse_option: Option<F>,
+    ) -> Result<(Option<T>, Option<&Cell>), TonCellError>
+    where
+        F: FnOnce(&mut CellParser) -> Result<T, TonCellError>,
+    {
+        let reference = self.reference(ref_index.to_owned())?;
+        *ref_index += 1;
+        if reference.cell_type != CellType::PrunnedBranchCell as u8 && parse_option.is_some() {
+            let parse = parse_option.unwrap();
+            let res = reference.parse(parse)?;
+            return Ok((Some(res), None));
+        } else if reference.cell_type == CellType::PrunnedBranchCell as u8 {
+            return Ok((None, Some(reference)));
+        }
+        Err(TonCellError::cell_parser_error("Load ref not supported"))
+    }
+
+    pub fn load_block_info(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        if parser.load_u32(32)? != 0x9bc7a987 {
+            return Err(TonCellError::cell_parser_error("Not a BlockInfo"));
+        }
+        let version = parser.load_u32(32)?;
+        let not_master = parser.load_bit()?;
+        let after_merge = parser.load_bit()?;
+        let before_split = parser.load_bit()?;
+        let after_split = parser.load_bit()?;
+        let want_split = parser.load_bit()?;
+        let want_merge = parser.load_bit()?;
+        let key_block = parser.load_bit()?;
+        let vert_seqno_incr = parser.load_bit()?;
+        let flags = parser.load_u8(8)?;
+        if flags > 1 {
+            return Err(TonCellError::cell_parser_error("data.flags > 1"));
+        }
+        let seq_no = parser.load_u32(32)?;
+        let vert_seq_no = parser.load_u32(32)?;
+        if vert_seqno_incr && vert_seq_no < 1 {
+            return Err(TonCellError::cell_parser_error(
+                "data.vert_seqno_incr > data.vert_seq_no",
+            ));
+        }
+        let prev_seq_no = seq_no - 1;
+        parser.load_shard_ident()?;
+        let gen_utime = parser.load_u32(32)?;
+        let start_lt = parser.load_u64(64)?;
+        let end_lt = parser.load_u64(64)?;
+        let gen_validator_list_hash_short = parser.load_u32(32)?;
+        let gen_catchain_seqno = parser.load_u32(32)?;
+        let min_ref_mc_seqno = parser.load_u32(32)?;
+        let prev_key_block_seqno = parser.load_u32(32)?;
+        println!("data: {:?}", prev_key_block_seqno);
+        println!("flag & 1: {:?}", flags & 1);
+        println!("not master: {:?}", not_master);
+
+        if flags & 1 > 0 {
+            parser.load_global_version()?;
+        }
+        if not_master {
+            cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_blk_master_info))?;
+        }
+
+        cell.load_ref_if_exist(
+            ref_index,
+            Some(
+                |c: &Cell, inner_ref_index: &mut usize, p: &mut CellParser| {
+                    Cell::load_blk_prev_info(c, inner_ref_index, p, after_merge)
+                },
+            ),
+        )?;
+
+        if vert_seqno_incr {
+            cell.load_ref_if_exist(
+                ref_index,
+                Some(
+                    |c: &Cell, inner_ref_index: &mut usize, p: &mut CellParser| {
+                        Cell::load_blk_prev_info(c, inner_ref_index, p, false)
+                    },
+                ),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn load_blk_master_info(parser: &mut CellParser) -> Result<(), TonCellError> {
+        Cell::load_ext_blk_ref(parser)
+    }
+
+    pub fn load_ext_blk_ref(parser: &mut CellParser) -> Result<(), TonCellError> {
+        let end_lt = parser.load_u64(64)?;
+        let seq_no = parser.load_u32(32)?;
+        let root_hash = parser.load_bits(256)?;
+        let file_hash = parser.load_bits(256)?;
+        println!("end_lt and seq_no: {:?}, {:?}", end_lt, seq_no);
+        println!("root hash: {:?}", root_hash);
+        println!("file hash: {:?}", file_hash);
+        // FIXME: return ext blk ref
+        Ok(())
+    }
+
+    pub fn load_blk_prev_info(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        after_merge: bool,
+    ) -> Result<(), TonCellError> {
+        println!("in load blk prev info");
+        if !after_merge {
+            Cell::load_ext_blk_ref(parser)?;
+        } else {
+            cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_ext_blk_ref))?;
+            cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_ext_blk_ref))?;
+        }
+        Ok(())
+    }
+
+    pub fn load_value_flow(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        if parser.load_u32(32)? != 0xb8e48dfb {
+            return Err(TonCellError::cell_parser_error("not a ValueFlow"));
+        }
+        Ok(())
+    }
+
+    pub fn load_merkle_update(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        if parser.load_u8(32)? != 0x04 {
+            return Err(TonCellError::cell_parser_error("not a Merkle Update"));
+        }
+        let old_hash = parser.load_bits(256)?;
+        let new_hash = parser.load_bits(256)?;
+        println!("old hash: {:?}", old_hash);
+        println!("new hash: {:?}", new_hash);
+        let old = cell.reference(*ref_index)?;
+        *ref_index += 1;
+        let new = cell.reference(*ref_index)?;
+        *ref_index += 1;
+        Ok(())
     }
 }
 

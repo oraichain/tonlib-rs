@@ -10,6 +10,15 @@ lazy_static! {
     pub static ref CRC_32_ISCSI: Crc<u32> = Crc::<u32>::new(&crc::CRC_32_ISCSI);
 }
 
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
+pub enum CellType {
+    OrdinaryCell = 255,
+    PrunnedBranchCell = 1,
+    LibraryCell = 2,
+    MerkleProofCell = 3,
+    MerkleUpdateCell = 4,
+}
+
 /// Raw representation of Cell.
 ///
 /// References are stored as indices in BagOfCells.
@@ -19,6 +28,7 @@ pub(crate) struct RawCell {
     pub(crate) bit_len: usize,
     pub(crate) references: Vec<usize>,
     pub(crate) max_level: u8,
+    pub(crate) cell_type: u8,
 }
 
 /// Raw representation of BagOfCells.
@@ -225,11 +235,15 @@ fn read_cell(
     for _ in 0..ref_num {
         references.push(read_var_size(reader, size)?);
     }
+
+    // the first byte is the cell type
+    let cell_type = data[0];
     let cell = RawCell {
         data,
         bit_len,
         references,
         max_level,
+        cell_type,
     };
     Ok(cell)
 }
@@ -307,6 +321,7 @@ mod tests {
             bit_len: 1023,
             references: vec![],
             max_level: 255,
+            cell_type: CellType::OrdinaryCell as u8,
         };
         let raw_bag = RawBagOfCells {
             cells: vec![raw_cell],

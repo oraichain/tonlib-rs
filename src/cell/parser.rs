@@ -3,10 +3,13 @@ use std::io::Cursor;
 use bitstream_io::{BigEndian, BitRead, BitReader};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::identities::Zero;
+use num_traits::FromPrimitive;
 
 use crate::address::TonAddress;
 use crate::cell::util::*;
 use crate::cell::{MapTonCellError, TonCellError};
+
+use super::Cell;
 
 pub struct CellParser<'a> {
     pub(crate) bit_len: usize,
@@ -113,6 +116,22 @@ impl CellParser<'_> {
         Ok(big_uint)
     }
 
+    pub fn load_uint_le(&mut self, bit_len: usize) -> Result<BigUint, TonCellError> {
+        let mut last_one = -1i64;
+        let mut l = 1;
+        for i in 0..32 {
+            if (bit_len & l) > 0 {
+                last_one = i;
+            }
+            l = l << 1;
+        }
+        if last_one == -1 {
+            return Err(TonCellError::cell_parser_error("not a UintLe"));
+        }
+        last_one += 1;
+        self.load_uint(last_one as usize)
+    }
+
     pub fn load_byte(&mut self) -> Result<u8, TonCellError> {
         self.load_u8(8)
     }
@@ -201,5 +220,32 @@ impl CellParser<'_> {
         self.bit_reader
             .skip(num_bits as u32)
             .map_cell_parser_error()
+    }
+
+    pub fn load_shard_ident(&mut self) -> Result<(), TonCellError> {
+        let ident = self.load_uint(2)?;
+        if !ident.is_zero() {
+            return Err(TonCellError::cell_parser_error("not a ShardIdent"));
+        }
+        let shard_pfx_bits = self.load_uint_le(60)?;
+        let workchain_id = self.load_i32(32)?;
+        let shard_prefix = self.load_u64(64)?;
+
+        // FIXME: return shard ident struct
+        Ok(())
+    }
+
+    pub fn load_global_version(&mut self) -> Result<(), TonCellError> {
+        let code = self.load_u8(8)?;
+        if code != 0xc4 {
+            return Err(TonCellError::cell_parser_error("not a GlobalVersion"));
+        }
+        let version = self.load_u32(32)?;
+        let capabilities = self.load_u64(64)?;
+        println!(
+            "version and capabilities: {:?}, {:?}",
+            version, capabilities
+        );
+        Ok(())
     }
 }
