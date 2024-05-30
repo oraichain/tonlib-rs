@@ -424,7 +424,7 @@ impl Cell {
         let gen_catchain_seqno = parser.load_u32(32)?;
         let min_ref_mc_seqno = parser.load_u32(32)?;
         let prev_key_block_seqno = parser.load_u32(32)?;
-        println!("data: {:?}", prev_key_block_seqno);
+        println!("prev key block seq no: {:?}", prev_key_block_seqno);
         println!("flag & 1: {:?}", flags & 1);
         println!("not master: {:?}", not_master);
 
@@ -494,8 +494,11 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
     ) -> Result<(), TonCellError> {
-        if parser.load_u32(32)? != 0xb8e48dfb {
-            return Err(TonCellError::cell_parser_error("not a ValueFlow"));
+        let prefix = parser.load_u32(32)?;
+        println!("prefix load value flow: {:?}", prefix);
+        if prefix != 0xb8e48dfb {
+            // return Err(TonCellError::cell_parser_error("not a ValueFlow"));
+            return Ok(());
         }
         Ok(())
     }
@@ -505,9 +508,10 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
     ) -> Result<(), TonCellError> {
-        if parser.load_u8(32)? != 0x04 {
+        if parser.load_u8(8)? != 0x04 {
             return Err(TonCellError::cell_parser_error("not a Merkle Update"));
         }
+        println!("current ref index: {:?}", ref_index);
         let old_hash = parser.load_bits(256)?;
         let new_hash = parser.load_bits(256)?;
         println!("old hash: {:?}", old_hash);
