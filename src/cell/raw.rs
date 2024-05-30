@@ -4,7 +4,7 @@ use bitstream_io::{BigEndian, BitWrite, BitWriter, ByteRead, ByteReader};
 use crc::Crc;
 use lazy_static::lazy_static;
 
-use crate::cell::{MapTonCellError, TonCellError};
+use crate::cell::{Cell, MapTonCellError, TonCellError};
 
 lazy_static! {
     pub static ref CRC_32_ISCSI: Crc<u32> = Crc::<u32>::new(&crc::CRC_32_ISCSI);
@@ -53,7 +53,7 @@ impl RawBagOfCells {
         // serialized_boc#b5ee9c72
         let magic = reader.read::<u32>().map_boc_deserialization_error()?;
 
-        let (has_idx, has_crc32c, _has_cache_bits, size) = match magic {
+        let (has_idx, has_crc32c, _has_cache_bits, size_bytes) = match magic {
             GENERIC_BOC_MAGIC => {
                 // has_idx:(## 1) has_crc32c:(## 1) has_cache_bits:(## 1) flags:(## 2) { flags = 0 }
                 let header = reader.read::<u8>().map_boc_deserialization_error()?;
@@ -75,17 +75,17 @@ impl RawBagOfCells {
         //   off_bytes:(## 8) { off_bytes <= 8 }
         let off_bytes = reader.read::<u8>().map_boc_deserialization_error()?;
         //cells:(##(size * 8))
-        let cells = read_var_size(&mut reader, size)?;
+        let cells = read_var_size(&mut reader, size_bytes)?;
         //   roots:(##(size * 8)) { roots >= 1 }
-        let roots = read_var_size(&mut reader, size)?;
+        let roots = read_var_size(&mut reader, size_bytes)?;
         //   absent:(##(size * 8)) { roots + absent <= cells }
-        let _absent = read_var_size(&mut reader, size)?;
+        let _absent = read_var_size(&mut reader, size_bytes)?;
         //   tot_cells_size:(##(off_bytes * 8))
         let _tot_cells_size = read_var_size(&mut reader, off_bytes)?;
         //   root_list:(roots * ##(size * 8))
         let mut root_list = vec![];
         for _ in 0..roots {
-            root_list.push(read_var_size(&mut reader, size)?)
+            root_list.push(read_var_size(&mut reader, size_bytes)?)
         }
         //   index:has_idx?(cells * ##(off_bytes * 8))
         let mut index = vec![];
@@ -95,10 +95,22 @@ impl RawBagOfCells {
             }
         }
         //   cell_data:(tot_cells_size * [ uint8 ])
+        // read_var_size(&mut reader, _tot_cells_size as u8)?;
         let mut cell_vec = Vec::with_capacity(cells);
+        let cur_cursor = reader.bitreader().position_in_bits().unwrap();
+        let serial_size = serial.len();
 
-        for _ in 0..cells {
-            let cell = read_cell(&mut reader, size)?;
+        let total_bytes_unread = serial.len() - (cur_cursor / 8) as usize;
+        println!("total bytes unread: {:?}", total_bytes_unread);
+        if total_bytes_unread < _tot_cells_size {
+            return Err(TonCellError::boc_deserialization_error(
+                "Not enough bytes for cells data",
+            ));
+        }
+
+        for i in 0..cells {
+            println!("cell index: {:?}", i);
+            let cell = read_cell(&mut reader, size_bytes)?;
             cell_vec.push(cell);
         }
         //   crc32c:has_crc32c?uint32
@@ -107,6 +119,7 @@ impl RawBagOfCells {
         } else {
             0
         };
+        let position = reader.bitreader().position_in_bits().unwrap();
         // TODO: Check crc32
 
         Ok(RawBagOfCells {
@@ -210,6 +223,27 @@ fn read_cell(
     let ref_num = d1 & 0x07;
     let data_size = ((d2 >> 1) + (d2 & 1)).into();
     let full_bytes = (d2 & 0x01) == 0;
+    let has_hashes = (d1 & 16) != 0;
+    let hashes_size = if has_hashes {
+        get_hash_count(max_level) * 32
+    } else {
+        0
+    };
+    let depth_size = if has_hashes {
+        get_hash_count(max_level) * 2
+    } else {
+        0
+    };
+
+    println!("cell hash count: {:?}", get_hash_count(max_level));
+
+    println!(
+        "max level and stuff: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}",
+        max_level, _is_exotic, ref_num, data_size, full_bytes, has_hashes, hashes_size, depth_size
+    );
+
+    read_var_size(reader, hashes_size)?;
+    read_var_size(reader, depth_size)?;
 
     let mut data = reader
         .read_to_vec(data_size)
@@ -236,6 +270,8 @@ fn read_cell(
         references.push(read_var_size(reader, size)?);
     }
 
+    println!("data: {:?}", data);
+
     // the first byte is the cell type
     let cell_type = data[0];
     let cell = RawCell {
@@ -246,6 +282,20 @@ fn read_cell(
         cell_type,
     };
     Ok(cell)
+}
+
+fn get_hash_count(level_mask: u8) -> u8 {
+    get_level_from_mask(level_mask & 7)
+}
+
+fn get_level_from_mask(mask: u8) -> u8 {
+    let mut mask = mask;
+    let mut n = 0;
+    for i in 0..3 {
+        n += mask & 1;
+        mask = mask >> 1u8;
+    }
+    return n + 1;
 }
 
 fn raw_cell_size(cell: &RawCell, ref_size_bytes: u32) -> u32 {
