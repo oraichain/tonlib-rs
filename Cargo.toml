@@ -11,7 +11,7 @@ include = ["src/*", "resources/*", "Cargo.toml"]
 default = []
 state_cache = []
 emulate_get_method = []
-no_avx512 = ["tonlib-sys/no_avx512"]
+# no_avx512 = ["tonlib-sys/no_avx512"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -43,7 +43,7 @@ thiserror = "1"
 tokio = { version = "1", features = ["rt", "macros"] }
 tokio-retry = "0.3"
 # clone tonlib-sys: https://github.com/ston-fi/tonlib-sys. Somehow cannot build with the release version of tonlib-sys
-tonlib-sys = { path = "../tonlib-sys" }
+# tonlib-sys = { path = "../tonlib-sys" }
 
 [dev-dependencies]
 anyhow = "1"
