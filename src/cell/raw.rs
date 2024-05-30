@@ -109,7 +109,6 @@ impl RawBagOfCells {
         }
 
         for i in 0..cells {
-            println!("cell index: {:?}", i);
             let cell = read_cell(&mut reader, size_bytes)?;
             cell_vec.push(cell);
         }
@@ -235,13 +234,6 @@ fn read_cell(
         0
     };
 
-    println!("cell hash count: {:?}", get_hash_count(max_level));
-
-    println!(
-        "max level and stuff: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}",
-        max_level, _is_exotic, ref_num, data_size, full_bytes, has_hashes, hashes_size, depth_size
-    );
-
     read_var_size(reader, hashes_size)?;
     read_var_size(reader, depth_size)?;
 
@@ -269,8 +261,6 @@ fn read_cell(
     for _ in 0..ref_num {
         references.push(read_var_size(reader, size)?);
     }
-
-    println!("data: {:?}", data);
 
     // the first byte is the cell type
     let cell_type = data[0];
