@@ -522,6 +522,37 @@ impl Cell {
         *ref_index += 1;
         Ok(())
     }
+
+    pub fn load_block_extra(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        if parser.load_u32(32)? != 0x4a33f6fd {
+            return Err(TonCellError::cell_parser_error("not a BlockExtra"));
+        }
+        cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_in_msg_descr))?;
+        cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_out_msg_descr))?;
+        cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_shard_account_blocks))?;
+        Ok(())
+    }
+
+    pub fn load_in_msg_descr(parser: &mut CellParser) -> Result<(), TonCellError> {
+        Ok(())
+    }
+
+    pub fn load_out_msg_descr(parser: &mut CellParser) -> Result<(), TonCellError> {
+        Ok(())
+    }
+
+    pub fn load_shard_account_blocks(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        // TODO: implement hashmap
+        Ok(())
+     }
 }
 
 impl Debug for Cell {
