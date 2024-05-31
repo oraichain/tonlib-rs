@@ -608,6 +608,21 @@ impl Cell {
         Ok(())
     }
 
+    pub fn load_hash_map<T>(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: usize,
+        f: fn(&Cell, &mut usize, &mut CellParser, &BigUint) -> Result<Option<T>, TonCellError>,
+    ) -> Result<HashMap<String, T>, TonCellError>
+    where
+        T: Debug,
+    {
+        let mut hashmap = Hashmap::new(n, f);
+        hashmap.deserialize(cell, ref_index, parser)?;
+        Ok(hashmap.map)
+    }
+
     pub fn load_hash_map_e<T>(
         cell: &Cell,
         ref_index: &mut usize,
@@ -820,16 +835,43 @@ impl Cell {
         let cell_r1 = cell.reference(ref_index.to_owned())?;
         *ref_index += 1;
         let new_ref_index = &mut 0usize;
+        // use a new parser to reset cell cursor, since we are handling a new cell.
+        let cell_r1_parser = &mut cell_r1.parser();
         println!("current cell data: {:?}", cell.data);
         println!("ref index after all: {:?}", ref_index);
         println!("cell r1 type: {:?}", cell_r1.cell_type);
         println!("cell r1: {:?}", cell_r1.data);
         if cell_r1.cell_type == CellType::OrdinaryCell as u8 {
             // TODO: impl
+            // prev_blk_signatures
+            Cell::load_hash_map_e(
+                &cell_r1,
+                new_ref_index,
+                cell_r1_parser,
+                16,
+                Cell::load_crypto_signature_pair,
+            )?;
+            // recover_create_msg
+            Cell::load_maybe_ref(
+                &cell_r1,
+                new_ref_index,
+                cell_r1_parser,
+                Some(Cell::load_in_msg),
+                None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<(), TonCellError>>,
+            )?;
+
+            // mint_msg
+            Cell::load_maybe_ref(
+                &cell_r1,
+                new_ref_index,
+                cell_r1_parser,
+                Some(Cell::load_in_msg),
+                None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<(), TonCellError>>,
+            )?;
         }
-        // if key_block {
-        //     Cell::load_config_params(cell, ref_index, parser)?;
-        // }
+        if key_block {
+            Cell::load_config_params(cell, ref_index, parser)?;
+        }
         Ok(())
     }
 
@@ -900,12 +942,168 @@ impl Cell {
         Ok(())
     }
 
+    pub fn load_crypto_signature_pair(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        _key: &BigUint,
+    ) -> Result<Option<()>, TonCellError> {
+        let node_id_short = parser.load_bits(256)?;
+        println!("node id short: {:?}", node_id_short);
+        Cell::load_crypto_signature(cell, ref_index, parser)?;
+        // We can safely ignore this since it is called in load_ref_if_exist
+        Ok(Some(()))
+    }
+
+    pub fn load_crypto_signature(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        let magic = parser.load_uint(4)?;
+        if magic != BigUint::from_u8(0x5).unwrap() {
+            return Err(TonCellError::cell_parser_error(
+                "not a CryptoSignatureSimple",
+            ));
+        }
+        let r = parser.load_bits(256)?;
+        let s = parser.load_bits(256)?;
+        Ok(())
+    }
+
+    pub fn load_in_msg(
+        _cell: &Cell,
+        _ref_index: &mut usize,
+        _parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        Ok(())
+    }
+
     pub fn load_config_params(
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
     ) -> Result<(), TonCellError> {
+        let config_addr = parser.load_bits(256)?;
+        println!("config addr: {:?}", config_addr);
+        cell.load_ref_if_exist(
+            ref_index,
+            Some(
+                |inner_cell: &Cell, inner_ref_index: &mut usize, inner_parser: &mut CellParser| {
+                    Cell::load_hash_map(
+                        inner_cell,
+                        inner_ref_index,
+                        inner_parser,
+                        32,
+                        |hashmap_cell: &Cell,
+                         hashmap_ref_index: &mut usize,
+                         _hashmap_parser: &mut CellParser,
+                         n: &BigUint| {
+                            hashmap_cell.load_ref_if_exist(
+                                hashmap_ref_index,
+                                Some(|inner_inner_cell: &Cell,
+                                 inner_inner_ref_index: &mut usize,
+                                 inner_inner_parser: &mut CellParser| {
+                                    Cell::load_config_param(inner_inner_cell, inner_inner_ref_index, inner_inner_parser, n)
+                                }),
+                            )?;
+                            Ok(Some(()))
+                        },
+                    )?;
+                    Ok(())
+                },
+            ),
+        )?;
         Ok(())
+    }
+
+    pub fn load_config_param(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: &BigUint,
+    ) -> Result<(), TonCellError> {
+        if parser.remaining_bits() < parser.bit_len || *ref_index != 0 {
+            return Err(TonCellError::cell_parser_error("Invalid config cell"));
+        }
+        println!("config param number: {:?}", n.to_string());
+        // TODO: impl deserializing validator set
+        // we dont need to implement all config params because each param is a cell ref -> they are independent.
+        let n_str = n.to_string();
+
+        // validator set
+        if n_str == "34" {
+            return Cell::load_config_param_34(cell, ref_index, parser, n);
+        }
+        Ok(())
+    }
+
+    pub fn load_config_param_34(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: &BigUint,
+    ) -> Result<(), TonCellError> {
+        let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
+        Ok(())
+    }
+
+    pub fn load_validator_set(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: &BigUint,
+    ) -> Result<(), TonCellError> {
+        let _type = parser.load_u8(8)?;
+        if _type == 0x11 {
+            let validator_type = "";
+            let utime_since = parser.load_u32(32)?;
+            let utime_until = parser.load_u32(32)?;
+            let total = parser.load_uint(16)?;
+            let main = parser.load_uint(16)?;
+            if total < main {
+                return Err(TonCellError::cell_parser_error("data.total < data.main"));
+            }
+            if main < BigUint::from_u8(1).unwrap() {
+                return Err(TonCellError::cell_parser_error("data.main < 1"));
+            }
+            Cell::load_hash_map(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
+        } else if _type == 0x12 {
+            let validator_type = "ext";
+            let utime_since = parser.load_u32(32)?;
+            let utime_until = parser.load_u32(32)?;
+            let total = parser.load_uint(16)?;
+            let main = parser.load_uint(16)?;
+            if total < main {
+                return Err(TonCellError::cell_parser_error("data.total < data.main"));
+            }
+            if main < BigUint::from_u8(1).unwrap() {
+                return Err(TonCellError::cell_parser_error("data.main < 1"));
+            }
+            let total_weight = parser.load_u64(64)?;
+            Cell::load_hash_map_e(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
+        }
+        Ok(())
+    }
+
+    pub fn load_validator_descr(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: &BigUint,
+    ) -> Result<Option<()>, TonCellError> {
+        let _type = parser.load_u8(8)?;
+        if _type == 0x53 {
+            let data_type = "";
+            let public_key = parser.load_sig_pub_key()?;
+            let weight = parser.load_u64(64)?;
+        } else {
+            let data_type = "addr";
+            let public_key = parser.load_sig_pub_key()?;
+            let weight = parser.load_u64(64)?;
+            let adnl_addr = parser.load_bits(256)?;
+        }
+        Ok(Some(()))
     }
 }
 

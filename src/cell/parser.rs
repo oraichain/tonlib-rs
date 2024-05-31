@@ -261,10 +261,7 @@ impl CellParser<'_> {
                 let s = self.load_uint(n)?;
                 return Ok((s, n));
             }
-            return Ok((
-                BigUint::from_u8(0).unwrap(),
-                n,
-            ));
+            return Ok((BigUint::from_u8(0).unwrap(), n));
         }
         let type2 = self.load_bit()?;
         if !type2 {
@@ -285,7 +282,10 @@ impl CellParser<'_> {
         Ok((s, n_usize))
     }
 
-    pub fn load_var_uinteger(&mut self, bit_len: usize) -> Result<(BigUint, BigUint), TonCellError> {
+    pub fn load_var_uinteger(
+        &mut self,
+        bit_len: usize,
+    ) -> Result<(BigUint, BigUint), TonCellError> {
         let len = self.load_uint_less(bit_len)?;
         let len_usize = usize::try_from(len.clone()).map_err(TonCellError::cell_parser_error)?;
         let mut value = BigUint::zero();
@@ -293,8 +293,17 @@ impl CellParser<'_> {
             // TODO
         } else {
             value = self.load_uint(len_usize * 8)?;
-            println!("value var uinteger: {:?}", value.to_string());
         }
         Ok((len, value))
+    }
+
+    pub fn load_sig_pub_key(&mut self) -> Result<(), TonCellError> {
+        let magic = self.load_u32(32)?;
+        if magic != 0x8e81278a {
+            return Err(TonCellError::cell_parser_error("Not a SigPubKey"));
+        }
+        let pubKey = self.load_bits(256)?;
+        println!("pub key: {:?}", hex::encode(pubKey));
+        Ok(())
     }
 }
