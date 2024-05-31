@@ -426,6 +426,10 @@ mod tests {
         first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
             .unwrap();
+
+        first_root
+            .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
+            .unwrap();
         Ok(())
     }
 
@@ -447,7 +451,7 @@ mod tests {
             parser.bit_reader.position_in_bits().unwrap()
         );
         let cell_type = first_root.get_bits_descriptor();
-        println!("cell type: {:?}", first_root.cell_type);
+        println!("cell type: {:?}", cell_type);
         first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_block_info))
             .unwrap();
@@ -457,6 +461,10 @@ mod tests {
 
         first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
+            .unwrap();
+
+        first_root
+            .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
         Ok(())
     }

@@ -4,6 +4,7 @@ use std::fmt::{Debug, Formatter};
 use std::hash::Hash;
 use std::io::Cursor;
 use std::ops::Deref;
+use std::process::exit;
 use std::sync::Arc;
 
 pub use bag_of_cells::*;
@@ -15,13 +16,15 @@ pub use builder::*;
 pub use dict_loader::*;
 pub use error::*;
 use num_bigint::BigUint;
-use num_traits::{One, ToPrimitive};
+use num_traits::{FromPrimitive, One, ToPrimitive};
 pub use parser::*;
 pub use raw::*;
 use sha2::{Digest, Sha256};
 pub use slice::*;
 pub use state_init::*;
 pub use util::*;
+
+use crate::hashmap::Hashmap;
 
 mod bag_of_cells;
 mod bit_string;
@@ -173,6 +176,10 @@ impl Cell {
 
     pub fn cell_hash_base64(&self) -> Result<String, TonCellError> {
         Ok(URL_SAFE_NO_PAD.encode(self.cell_hash()?))
+    }
+
+    pub fn cell_hash_hex(&self) -> Result<String, TonCellError> {
+        Ok(hex::encode(self.cell_hash()?))
     }
 
     ///Snake format when we store part of the data in a cell and the rest of the data in the first child cell (and so recursively).
@@ -355,8 +362,6 @@ impl Cell {
         let reference = self.reference(ref_index.to_owned())?;
         *ref_index += 1;
         let mut parser = reference.parser();
-        println!("ref index: {:?}", ref_index);
-        println!("reference cell type: {:?}", reference.cell_type);
         if reference.cell_type != CellType::PrunnedBranchCell as u8 && parse_option.is_some() {
             let parse = parse_option.unwrap();
             let res = parse(&reference, &mut 0usize, &mut parser)?;
@@ -365,6 +370,39 @@ impl Cell {
             return Ok((None, Some(reference)));
         }
         Err(TonCellError::cell_parser_error("Load ref not supported"))
+    }
+
+    pub fn load_maybe_ref<F, F2, T>(
+        &self,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        parse_option: Option<F>,
+        parse_prunned_branch_cell_option: Option<F2>,
+    ) -> Result<(Option<T>, Option<&Cell>), TonCellError>
+    where
+        F: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError>,
+        F2: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError>,
+    {
+        let exist = parser.load_bit()?;
+        if !exist || parse_option.is_none() {
+            return Ok((None, None));
+        };
+        let reference = self.reference(ref_index.to_owned())?;
+        *ref_index += 1;
+        let mut new_parser = reference.parser();
+        println!(
+            "reference cell type, ref index and ref data: {:?}, {:?}, {:?}",
+            reference.cell_type, ref_index, reference.data
+        );
+        if reference.cell_type != CellType::PrunnedBranchCell as u8 {
+            let f = parse_option.unwrap();
+            let res = f(&reference, &mut 0usize, &mut new_parser)?;
+            return Ok((Some(res), None));
+        } else if let Some(f2) = parse_prunned_branch_cell_option {
+            let res = f2(&reference, &mut 0usize, &mut new_parser)?;
+            return Ok((Some(res), None));
+        }
+        Ok((None, Some(reference)))
     }
 
     pub fn load_ref_if_exist_without_self<F, T>(
@@ -479,7 +517,6 @@ impl Cell {
         parser: &mut CellParser,
         after_merge: bool,
     ) -> Result<(), TonCellError> {
-        println!("in load blk prev info");
         if !after_merge {
             Cell::load_ext_blk_ref(parser)?;
         } else {
@@ -494,9 +531,8 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
     ) -> Result<(), TonCellError> {
-        let prefix = parser.load_u32(32)?;
-        println!("prefix load value flow: {:?}", prefix);
-        if prefix != 0xb8e48dfb {
+        let magic = parser.load_u32(32)?;
+        if magic != 0xb8e48dfb {
             // return Err(TonCellError::cell_parser_error("not a ValueFlow"));
             return Ok(());
         }
@@ -533,7 +569,18 @@ impl Cell {
         }
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_in_msg_descr))?;
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_out_msg_descr))?;
-        cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_shard_account_blocks))?;
+        // TODO: load shard block is currently wrong. Don't trust
+        cell.load_ref_if_exist(ref_index, Some(Cell::load_shard_account_blocks))?;
+        let rand_seed = parser.load_bits(256)?;
+        let created_by = parser.load_bits(256)?;
+        println!("rand seed: {:?}", rand_seed);
+        println!("created by: {:?}", created_by);
+        cell.load_maybe_ref(
+            ref_index,
+            parser,
+            Some(Cell::load_mc_block_extra),
+            None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<(), TonCellError>>,
+        )?;
         Ok(())
     }
 
@@ -550,9 +597,316 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
     ) -> Result<(), TonCellError> {
-        // TODO: implement hashmap
+        let result = Cell::load_hash_map_aug_e(
+            cell,
+            ref_index,
+            parser,
+            256,
+            Cell::load_account_block,
+            Cell::load_currency_collection,
+        )?;
         Ok(())
-     }
+    }
+
+    pub fn load_hash_map_e<T>(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: usize,
+        f: fn(&Cell, &mut usize, &mut CellParser, &BigUint) -> Result<Option<T>, TonCellError>,
+    ) -> Result<HashMap<String, T>, TonCellError>
+    where
+        T: Debug,
+    {
+        let mut hashmap = Hashmap::new(n, f);
+        hashmap.deserialize_e(cell, ref_index, parser)?;
+        Ok(hashmap.map)
+    }
+
+    pub fn load_hash_map_aug_e<F1, F2, T>(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: usize,
+        f1: F1,
+        f2: F2,
+    ) -> Result<HashMap<String, T>, TonCellError>
+    where
+        F1: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError> + Copy,
+        F2: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError> + Copy,
+        T: Debug,
+    {
+        let hash_map_fn = |cell: &Cell,
+                           ref_index: &mut usize,
+                           parser: &mut CellParser,
+                           key: &BigUint|
+         -> Result<Option<T>, TonCellError> {
+            let extra = f2(cell, ref_index, parser)?;
+            let value = f1(cell, ref_index, parser)?;
+            Ok(Some(value))
+        };
+        let mut hashmap = Hashmap::new(n, hash_map_fn);
+        hashmap.deserialize_e(cell, ref_index, parser)?;
+        println!("data map: {:?}", hashmap.map);
+        Ok(hashmap.map)
+    }
+
+    pub fn load_hash_map_aug<F1, F2, T>(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: usize,
+        f1: F1,
+        f2: F2,
+    ) -> Result<HashMap<String, T>, TonCellError>
+    where
+        F1: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError> + Copy,
+        F2: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError> + Copy,
+        T: Debug,
+    {
+        let hash_map_fn = |cell: &Cell,
+                           ref_index: &mut usize,
+                           parser: &mut CellParser,
+                           key: &BigUint|
+         -> Result<Option<T>, TonCellError> {
+            let extra = f2(cell, ref_index, parser)?;
+            let value = f1(cell, ref_index, parser)?;
+            Ok(Some(value))
+        };
+        let mut hashmap = Hashmap::new(n, hash_map_fn);
+        hashmap.deserialize(cell, ref_index, parser)?;
+
+        Ok(hashmap.map)
+    }
+
+    pub fn load_shard_account(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        Cell::load_account(cell, ref_index, parser)?;
+        let last_trans_hash = parser.load_bits(256)?;
+        let last_trans_lt = parser.load_u64(64)?;
+        println!("last trans hash: {:?}", last_trans_hash);
+        println!("last trans lt: {:?}", last_trans_lt);
+        Ok(())
+    }
+
+    pub fn load_account_block(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        let magic = parser.load_uint(4)?;
+        if magic != BigUint::from_u8(0x5).unwrap() {
+            return Err(TonCellError::cell_parser_error("not an AccountBlock"));
+        }
+        let account_addr = parser.load_bits(256)?;
+        println!("account addr load account block: {:?}", account_addr);
+        Cell::load_hash_map_aug(
+            cell,
+            ref_index,
+            parser,
+            64,
+            |ref_cell: &Cell, inner_ref_index: &mut usize, _parser: &mut CellParser| {
+                let _result =
+                    ref_cell.load_ref_if_exist(inner_ref_index, Some(Cell::load_transaction))?;
+                Ok(())
+            },
+            Cell::load_currency_collection,
+        )?;
+        cell.load_ref_if_exist(ref_index, Some(Cell::load_hash_update))?;
+        Ok(())
+    }
+
+    pub fn load_depth_balance_info(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        let split_depth = parser.load_uint_le(30)?;
+        println!("split depth: {:?}", split_depth);
+        Cell::load_currency_collection(cell, ref_index, parser)?;
+        Ok(())
+    }
+
+    pub fn load_account(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        if parser.load_u32(32)? != 0x4a33f6fd {
+            return Err(TonCellError::cell_parser_error("not a BlockExtra"));
+        }
+        cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_in_msg_descr))?;
+        cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_out_msg_descr))?;
+        cell.load_ref_if_exist(ref_index, Some(Cell::load_shard_account_blocks))?;
+        Ok(())
+    }
+
+    pub fn load_currency_collection(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        Cell::load_grams(parser)?;
+        Cell::load_extra_currency_collection(cell, ref_index, parser)?;
+        Ok(())
+    }
+
+    pub fn load_grams(parser: &mut CellParser) -> Result<(), TonCellError> {
+        parser.load_var_uinteger(16)?;
+        Ok(())
+    }
+
+    pub fn load_extra_currency_collection(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        let result = Cell::load_hash_map_e(
+            cell,
+            ref_index,
+            parser,
+            32,
+            |cell: &Cell, ref_index: &mut usize, parser: &mut CellParser, _key: &BigUint| {
+                let result = parser.load_var_uinteger(32)?;
+                println!("load extra currency collection: {:?}", result);
+                Ok(Some(result))
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn load_transaction(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        // TODO: impl load transaction.
+        // we can safely skip this because transaction is a different cell ref
+        Ok(())
+    }
+
+    pub fn load_hash_update(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        let magic = parser.load_u8(8)?;
+        if magic != 0x72 {
+            return Err(TonCellError::cell_parser_error("not a hash update"));
+        }
+        let old_hash = parser.load_bits(256)?;
+        let new_hash = parser.load_bits(256)?;
+        println!("old hash load hash update: {:?}", old_hash);
+        println!("new hash load hash update: {:?}", new_hash);
+        Ok(())
+    }
+
+    pub fn load_mc_block_extra(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        let magic = parser.load_u16(16)?;
+        if magic != 0xcca5 {
+            return Err(TonCellError::cell_parser_error("not a McBlockExtra"));
+        }
+        let key_block = parser.load_bit()?;
+        Cell::load_shard_hashes(cell, ref_index, parser)?;
+        Cell::load_shard_fees(cell, ref_index, parser)?;
+
+        let cell_r1 = cell.reference(ref_index.to_owned())?;
+        *ref_index += 1;
+        let new_ref_index = &mut 0usize;
+        println!("current cell data: {:?}", cell.data);
+        println!("ref index after all: {:?}", ref_index);
+        println!("cell r1 type: {:?}", cell_r1.cell_type);
+        println!("cell r1: {:?}", cell_r1.data);
+        if cell_r1.cell_type == CellType::OrdinaryCell as u8 {
+            // TODO: impl
+        }
+        // if key_block {
+        //     Cell::load_config_params(cell, ref_index, parser)?;
+        // }
+        Ok(())
+    }
+
+    pub fn load_shard_hashes(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        let hashmap = Cell::load_hash_map_e(
+            cell,
+            ref_index,
+            parser,
+            32,
+            |ref_cell: &Cell,
+             inner_ref_index: &mut usize,
+             _parser: &mut CellParser,
+             _key: &BigUint| {
+                let result = ref_cell.load_ref_if_exist(
+                    inner_ref_index,
+                    Some(
+                        |ref_ref_cell: &Cell,
+                         inner_inner_ref_index: &mut usize,
+                         parser: &mut CellParser| {
+                            // TODO: parse load_shard_descr as well
+                            Cell::load_bin_tree(ref_ref_cell, inner_inner_ref_index, parser)
+                        },
+                    ),
+                )?;
+                Ok(result.0)
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn load_bin_tree(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        // TODO: impl
+        // We can safely ignore this since it is called in load_ref_if_exist
+        Ok(())
+    }
+
+    pub fn load_shard_fees(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        let hashmap = Cell::load_hash_map_aug_e(
+            cell,
+            ref_index,
+            parser,
+            96,
+            Cell::load_shard_fee_created,
+            Cell::load_shard_fee_created,
+        )?;
+        Ok(())
+    }
+
+    pub fn load_shard_fee_created(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        Cell::load_currency_collection(cell, ref_index, parser)?;
+        Cell::load_currency_collection(cell, ref_index, parser)?;
+        Ok(())
+    }
+
+    pub fn load_config_params(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        Ok(())
+    }
 }
 
 impl Debug for Cell {

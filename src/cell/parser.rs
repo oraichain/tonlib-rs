@@ -116,6 +116,10 @@ impl CellParser<'_> {
         Ok(big_uint)
     }
 
+    pub fn load_uint_less(&mut self, bit_len: usize) -> Result<BigUint, TonCellError> {
+        self.load_uint_le(bit_len - 1)
+    }
+
     pub fn load_uint_le(&mut self, bit_len: usize) -> Result<BigUint, TonCellError> {
         let mut last_one = -1i64;
         let mut l = 1;
@@ -247,5 +251,50 @@ impl CellParser<'_> {
             version, capabilities
         );
         Ok(())
+    }
+
+    pub fn load_label(&mut self, m: usize) -> Result<(BigUint, usize), TonCellError> {
+        let _type = self.load_bit()?;
+        if !_type {
+            let n = self.load_unary_length()?;
+            if n > 0 {
+                let s = self.load_uint(n)?;
+                return Ok((s, n));
+            }
+            return Ok((
+                BigUint::from_u8(0).unwrap(),
+                n,
+            ));
+        }
+        let type2 = self.load_bit()?;
+        if !type2 {
+            let n = self.load_uint_le(m)?;
+            let n_usize = usize::try_from(n.clone()).map_err(TonCellError::cell_parser_error)?;
+            let s = self.load_uint(n_usize)?;
+            return Ok((s, n_usize));
+        }
+        let v = self.load_bit()?;
+        let v_value = if v { 1 } else { 0 };
+        let n = self.load_uint_le(m)?;
+        let n_usize = usize::try_from(n.clone()).map_err(TonCellError::cell_parser_error)?;
+        let mut s = BigUint::from_u64(0).unwrap();
+        for _ in 0..n_usize {
+            s = s << 1;
+            s = s | BigUint::from_usize(v_value).unwrap();
+        }
+        Ok((s, n_usize))
+    }
+
+    pub fn load_var_uinteger(&mut self, bit_len: usize) -> Result<(BigUint, BigUint), TonCellError> {
+        let len = self.load_uint_less(bit_len)?;
+        let len_usize = usize::try_from(len.clone()).map_err(TonCellError::cell_parser_error)?;
+        let mut value = BigUint::zero();
+        if len_usize == 0 {
+            // TODO
+        } else {
+            value = self.load_uint(len_usize * 8)?;
+            println!("value var uinteger: {:?}", value.to_string());
+        }
+        Ok((len, value))
     }
 }
