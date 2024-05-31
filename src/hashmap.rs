@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use log::debug;
 use num_bigint::BigUint;
 use num_traits::FromPrimitive;
 
@@ -107,9 +108,9 @@ where
             }
             return Ok(());
         }
-        println!("cell type in load hashmap: {:?}", cell.cell_type);
-        println!("cell bits: {:?}", cell.data);
-        println!("current n & fork: {:?}, {:?}", n, fork);
+        debug!("cell type in load hashmap: {:?}", cell.cell_type);
+        debug!("cell bits: {:?}", cell.data);
+        debug!("current n & fork: {:?}, {:?}", n, fork);
         if n == 0 && fork {
             let data = (self.f)(cell, ref_index, parser, &key)?;
             if let Some(data) = data {
@@ -121,7 +122,7 @@ where
         if fork {
             // left
             let left: BigUint = key << 1; // pow 2
-            println!("left key: {:?}", left);
+            debug!("left key: {:?}", left);
             let left_ref_cell = cell.reference(ref_index.to_owned())?;
             let left_parser = &mut left_ref_cell.parser();
             self.load_hashmap(
@@ -133,11 +134,11 @@ where
                 !fork,
             )?;
             *ref_index += 1;
-            println!("left ref cell data: {:?}", left_ref_cell.data);
+            debug!("left ref cell data: {:?}", left_ref_cell.data);
 
             // right
             let right = left + BigUint::from_u8(1).unwrap();
-            println!("right key: {:?}", right);
+            debug!("right key: {:?}", right);
             let right_ref_cell = cell.reference(ref_index.to_owned())?;
             let right_parser = &mut right_ref_cell.parser();
             self.load_hashmap(
@@ -149,18 +150,18 @@ where
                 !fork,
             )?;
             *ref_index += 1;
-            println!("right ref cell data: {:?}", right_ref_cell.data);
+            debug!("right ref cell data: {:?}", right_ref_cell.data);
 
-            println!("ref index after recursion: {:?}", ref_index);
+            debug!("ref index after recursion: {:?}", ref_index);
             return Ok(());
         } else {
             let label = parser.load_label(n)?;
-            println!("label: {:?}", label);
+            debug!("label: {:?}", label);
             if label.1 > 0 {
                 let next_key = key << label.1 | label.0;
                 let m = n - usize::try_from(label.1).map_err(TonCellError::cell_parser_error)?;
-                println!("next key: {:?}", next_key);
-                println!("m: {:?}", m);
+                debug!("next key: {:?}", next_key);
+                debug!("m: {:?}", m);
                 self.load_hashmap(cell, ref_index, parser, m, next_key, !fork)?;
             } else {
                 self.load_hashmap(cell, ref_index, parser, n, key, !fork)?;
