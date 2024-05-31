@@ -188,6 +188,13 @@ impl TryFrom<&String> for TvmStackEntry {
     fn try_from(value: &String) -> Result<Self, Self::Error> {
         let bytes = value.as_bytes().to_vec();
         let bit_len = bytes.len() * 8;
+        let d1 = bytes[0];
+        let is_exotic = (d1 & 8) != 0;
+        let cell_type = if is_exotic {
+            bytes[0]
+        } else {
+            CellType::OrdinaryCell as u8
+        };
         // todo: support reference and snake format
         let cell = Cell {
             data: bytes.clone(),

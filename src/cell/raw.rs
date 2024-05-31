@@ -218,7 +218,7 @@ fn read_cell(
     let d2 = reader.read::<u8>().map_boc_deserialization_error()?;
 
     let max_level = d1 >> 5;
-    let _is_exotic = (d1 & 8) != 0;
+    let is_exotic = (d1 & 8) != 0;
     let ref_num = d1 & 0x07;
     let data_size = ((d2 >> 1) + (d2 & 1)).into();
     let full_bytes = (d2 & 0x01) == 0;
@@ -263,7 +263,11 @@ fn read_cell(
     }
 
     // the first byte is the cell type
-    let cell_type = data[0];
+    let cell_type = if is_exotic {
+        data[0]
+    } else {
+        CellType::OrdinaryCell as u8
+    };
     let cell = RawCell {
         data,
         bit_len,

@@ -8,6 +8,8 @@ use crate::address::TonAddress;
 use crate::cell::error::{MapTonCellError, TonCellError};
 use crate::cell::{ArcCell, Cell, CellParser};
 
+use super::CellType;
+
 const MAX_CELL_BITS: usize = 1023;
 const MAX_CELL_REFERENCES: usize = 4;
 
@@ -272,7 +274,13 @@ impl CellBuilder {
                     ref_count
                 )));
             }
-            let cell_type = vec[0];
+            let d1 = vec[0];
+            let is_exotic = (d1 & 8) != 0;
+            let cell_type = if is_exotic {
+                vec[0]
+            } else {
+                CellType::OrdinaryCell as u8
+            };
             Ok(Cell {
                 data: vec.to_vec(),
                 bit_len,
