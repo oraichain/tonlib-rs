@@ -297,13 +297,13 @@ impl CellParser<'_> {
         Ok((len, value))
     }
 
-    pub fn load_sig_pub_key(&mut self) -> Result<(), TonCellError> {
+    pub fn load_sig_pub_key(&mut self) -> Result<Vec<u8>, TonCellError> {
         let magic = self.load_u32(32)?;
         if magic != 0x8e81278a {
             return Err(TonCellError::cell_parser_error("Not a SigPubKey"));
         }
         let pubKey = self.load_bits(256)?;
-        println!("pub key: {:?}", hex::encode(pubKey));
-        Ok(())
+        println!("pub key: {:?}", hex::encode(pubKey.clone()));
+        Ok(pubKey)
     }
 }

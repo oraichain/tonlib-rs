@@ -12,6 +12,7 @@ pub mod mnemonic;
 // pub mod tl;
 pub mod hashmap;
 // pub mod types;
+pub mod responses;
 pub mod wallet;
 
 #[doc = include_str!("../README.md")]

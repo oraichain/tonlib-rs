@@ -197,6 +197,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use log::debug;
+
     use crate::cell::{BagOfCells, Cell, CellBuilder, TonCellError};
     use crate::message::ZERO_COINS;
 
@@ -427,9 +429,10 @@ mod tests {
             .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
             .unwrap();
 
-        first_root
+        let block_extra = first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
+        println!("Block Extra{:?}", block_extra);
         Ok(())
     }
 

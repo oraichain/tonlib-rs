@@ -25,6 +25,9 @@ pub use state_init::*;
 pub use util::*;
 
 use crate::hashmap::Hashmap;
+use crate::responses::{
+    BlockExtra, ConfigParams, ConfigParams34, CurrentValidators, McBlockExtra, ValidatorDescr,
+};
 
 mod bag_of_cells;
 mod bit_string;
@@ -563,10 +566,13 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<BlockExtra, TonCellError> {
         if parser.load_u32(32)? != 0x4a33f6fd {
             return Err(TonCellError::cell_parser_error("not a BlockExtra"));
         }
+
+        let mut block_extra = BlockExtra::default();
+
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_in_msg_descr))?;
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_out_msg_descr))?;
         // TODO: load shard block is currently wrong. Don't trust
@@ -575,13 +581,18 @@ impl Cell {
         let created_by = parser.load_bits(256)?;
         println!("rand seed: {:?}", rand_seed);
         println!("created by: {:?}", created_by);
-        cell.load_maybe_ref(
+
+        let res = cell.load_maybe_ref(
             ref_index,
             parser,
             Some(Cell::load_mc_block_extra),
-            None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<(), TonCellError>>,
+            None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<McBlockExtra, TonCellError>>,
         )?;
-        Ok(())
+
+        if res.0.is_some() {
+            block_extra.custom = res.0.unwrap();
+        }
+        Ok(block_extra)
     }
 
     pub fn load_in_msg_descr(parser: &mut CellParser) -> Result<(), TonCellError> {
@@ -823,7 +834,9 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<McBlockExtra, TonCellError> {
+        let mut mc_block_extra = McBlockExtra::default();
+
         let magic = parser.load_u16(16)?;
         if magic != 0xcca5 {
             return Err(TonCellError::cell_parser_error("not a McBlockExtra"));
@@ -870,9 +883,9 @@ impl Cell {
             )?;
         }
         if key_block {
-            Cell::load_config_params(cell, ref_index, parser)?;
+            mc_block_extra.config = Cell::load_config_params(cell, ref_index, parser)?;
         }
-        Ok(())
+        Ok(mc_block_extra)
     }
 
     pub fn load_shard_hashes(
@@ -983,14 +996,16 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<ConfigParams, TonCellError> {
+        let mut config_params = ConfigParams::default();
+
         let config_addr = parser.load_bits(256)?;
         println!("config addr: {:?}", config_addr);
-        cell.load_ref_if_exist(
+        let res = cell.load_ref_if_exist(
             ref_index,
             Some(
                 |inner_cell: &Cell, inner_ref_index: &mut usize, inner_parser: &mut CellParser| {
-                    Cell::load_hash_map(
+                    let res = Cell::load_hash_map(
                         inner_cell,
                         inner_ref_index,
                         inner_parser,
@@ -999,7 +1014,7 @@ impl Cell {
                          hashmap_ref_index: &mut usize,
                          _hashmap_parser: &mut CellParser,
                          n: &BigUint| {
-                            hashmap_cell.load_ref_if_exist(
+                            let res = hashmap_cell.load_ref_if_exist(
                                 hashmap_ref_index,
                                 Some(|inner_inner_cell: &Cell,
                                  inner_inner_ref_index: &mut usize,
@@ -1007,14 +1022,16 @@ impl Cell {
                                     Cell::load_config_param(inner_inner_cell, inner_inner_ref_index, inner_inner_parser, n)
                                 }),
                             )?;
-                            Ok(Some(()))
+                            Ok(res.0)
                         },
                     )?;
-                    Ok(())
+                    Ok(res)
                 },
             ),
         )?;
-        Ok(())
+
+        config_params.config = res.0.unwrap();
+        Ok(config_params)
     }
 
     pub fn load_config_param(
@@ -1022,7 +1039,7 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<Option<ConfigParams34>, TonCellError> {
         if parser.remaining_bits() < parser.bit_len || *ref_index != 0 {
             return Err(TonCellError::cell_parser_error("Invalid config cell"));
         }
@@ -1033,9 +1050,11 @@ impl Cell {
 
         // validator set
         if n_str == "34" {
-            return Cell::load_config_param_34(cell, ref_index, parser, n);
+            return Ok(Some(Cell::load_config_param_34(
+                cell, ref_index, parser, n,
+            )?));
         }
-        Ok(())
+        Ok(None)
     }
 
     pub fn load_config_param_34(
@@ -1043,9 +1062,13 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<ConfigParams34, TonCellError> {
+        let mut config_params_34 = ConfigParams34::default();
+        config_params_34.number = 34;
+
         let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
-        Ok(())
+        config_params_34.cur_validators = validators;
+        Ok(config_params_34)
     }
 
     pub fn load_validator_set(
@@ -1053,37 +1076,41 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<CurrentValidators, TonCellError> {
+        let mut curr_vals = CurrentValidators::default();
+
         let _type = parser.load_u8(8)?;
         if _type == 0x11 {
-            let validator_type = "";
-            let utime_since = parser.load_u32(32)?;
-            let utime_until = parser.load_u32(32)?;
-            let total = parser.load_uint(16)?;
-            let main = parser.load_uint(16)?;
-            if total < main {
+            curr_vals._type = "".to_string();
+            curr_vals.utime_since = parser.load_u32(32)?;
+            curr_vals.utime_until = parser.load_u32(32)?;
+            curr_vals.total = parser.load_uint(16)?;
+            curr_vals.main = parser.load_uint(16)?;
+            if curr_vals.total < curr_vals.main {
                 return Err(TonCellError::cell_parser_error("data.total < data.main"));
             }
-            if main < BigUint::from_u8(1).unwrap() {
+            if curr_vals.main < BigUint::from_u8(1).unwrap() {
                 return Err(TonCellError::cell_parser_error("data.main < 1"));
             }
-            Cell::load_hash_map(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
+            curr_vals.list =
+                Cell::load_hash_map(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
         } else if _type == 0x12 {
-            let validator_type = "ext";
-            let utime_since = parser.load_u32(32)?;
-            let utime_until = parser.load_u32(32)?;
-            let total = parser.load_uint(16)?;
-            let main = parser.load_uint(16)?;
-            if total < main {
+            curr_vals._type = "ext".to_string();
+            curr_vals.utime_since = parser.load_u32(32)?;
+            curr_vals.utime_until = parser.load_u32(32)?;
+            curr_vals.total = parser.load_uint(16)?;
+            curr_vals.main = parser.load_uint(16)?;
+            if curr_vals.total < curr_vals.main {
                 return Err(TonCellError::cell_parser_error("data.total < data.main"));
             }
-            if main < BigUint::from_u8(1).unwrap() {
+            if curr_vals.main < BigUint::from_u8(1).unwrap() {
                 return Err(TonCellError::cell_parser_error("data.main < 1"));
             }
-            let total_weight = parser.load_u64(64)?;
-            Cell::load_hash_map_e(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
+            curr_vals.total_weight = parser.load_u64(64)?;
+            curr_vals.list =
+                Cell::load_hash_map_e(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
         }
-        Ok(())
+        Ok(curr_vals)
     }
 
     pub fn load_validator_descr(
@@ -1091,19 +1118,21 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<Option<()>, TonCellError> {
+    ) -> Result<Option<ValidatorDescr>, TonCellError> {
+        let mut validator = ValidatorDescr::default();
+
         let _type = parser.load_u8(8)?;
         if _type == 0x53 {
-            let data_type = "";
-            let public_key = parser.load_sig_pub_key()?;
-            let weight = parser.load_u64(64)?;
+            validator._type = "".to_string();
+            validator.public_key = parser.load_sig_pub_key()?;
+            validator.weight = parser.load_u64(64)?;
         } else {
-            let data_type = "addr";
-            let public_key = parser.load_sig_pub_key()?;
-            let weight = parser.load_u64(64)?;
-            let adnl_addr = parser.load_bits(256)?;
+            validator._type = "addr".to_string();
+            validator.public_key = parser.load_sig_pub_key()?;
+            validator.weight = parser.load_u64(64)?;
+            validator.adnl_addr = parser.load_bits(256)?;
         }
-        Ok(Some(()))
+        Ok(Some(validator))
     }
 }
 
