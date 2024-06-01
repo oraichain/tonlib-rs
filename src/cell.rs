@@ -571,6 +571,8 @@ impl Cell {
             return Err(TonCellError::cell_parser_error("not a BlockExtra"));
         }
 
+        // println!("Cell hash: {:?}", cell.());
+
         let mut block_extra = BlockExtra::default();
 
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_in_msg_descr))?;

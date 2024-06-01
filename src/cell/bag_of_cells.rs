@@ -406,6 +406,7 @@ mod tests {
 
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(boc).unwrap();
+
         let first_root = cells.single_root().unwrap();
         let mut parser = first_root.parser();
         let magic = parser.load_u32(32).unwrap();
@@ -432,7 +433,7 @@ mod tests {
         let block_extra = first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
-        println!("Block Extra{:?}", block_extra);
+        println!("Block{:?}", block_extra);
         Ok(())
     }
 
@@ -466,9 +467,11 @@ mod tests {
             .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
             .unwrap();
 
-        first_root
+        let block_extra = first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
+
+        // println!("Block{:?}", block_extra);
         Ok(())
     }
 }

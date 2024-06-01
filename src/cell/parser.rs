@@ -303,7 +303,7 @@ impl CellParser<'_> {
             return Err(TonCellError::cell_parser_error("Not a SigPubKey"));
         }
         let pubKey = self.load_bits(256)?;
-        println!("pub key: {:?}", hex::encode(pubKey.clone()));
+        // println!("pub key: {:?}", hex::encode(pubKey.clone()));
         Ok(pubKey)
     }
 }
