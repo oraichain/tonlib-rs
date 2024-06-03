@@ -183,7 +183,7 @@ impl Cell {
         let mut hash_i = Cell::get_hashes_count_from_mask(Cell::apply_level_mask(
             &self,
             level.unwrap_or_default(),
-        ));
+        )) - 1;
 
         if self.cell_type == CellType::PrunnedBranchCell as u8 {
             let this_hash_i = self.get_hashes_count() - 1;
@@ -198,6 +198,7 @@ impl Cell {
             }
             hash_i = 0;
         }
+
         return self.depth[hash_i as usize] as u64;
     }
 
@@ -481,9 +482,7 @@ impl Cell {
 
                 repr = concat_bytes(&repr, &self.hashes[(hash_i - hash_i_offset - 1) as usize]);
             }
-            //if (type == Cell.MerkleProofCell || type == Cell.PrunnedBranchCell)
-            //    debug_log(" contains", bytesToHex(this.bits.getTopUppedArray()));
-            // console.log("Repr befor depth check: ", Buffer.from(repr).toString('hex'));
+
             let dest_i = hash_i - hash_i_offset;
 
             let mut depth = 0;
