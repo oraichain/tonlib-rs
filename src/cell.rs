@@ -590,8 +590,8 @@ impl Cell {
             None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<McBlockExtra, TonCellError>>,
         )?;
 
-        if res.0.is_some() {
-            block_extra.custom = res.0.unwrap();
+        if let Some(custom) = res.0 {
+            block_extra.custom = custom;
         }
         Ok(block_extra)
     }
