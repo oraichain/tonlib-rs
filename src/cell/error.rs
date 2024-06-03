@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum TonCellError {
     #[error("Bag of cells deserialization error ({0})")]
     BagOfCellsDeserializationError(String),
