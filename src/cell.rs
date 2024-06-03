@@ -61,7 +61,7 @@ pub struct Cell {
     pub has_hashes: bool,
     pub proof: bool,
     pub hashes: Vec<Vec<u8>>,
-    pub depth: Vec<u8>,
+    pub depth: Vec<u16>,
 }
 
 impl Cell {
@@ -190,6 +190,7 @@ impl Cell {
             if hash_i != this_hash_i {
                 let bit_reader = BitArrayReader {
                     array: self.data.clone(),
+                    cursor: 0,
                 };
                 return bit_reader.read_uint16(
                     16 + this_hash_i as usize * HASH_BYTES * 8 + hash_i as usize * DEPTH_BYTES * 8,
@@ -214,7 +215,7 @@ impl Cell {
         max_depth
     }
 
-    fn get_refs_descriptor(&self, _level_mask: Option<u8>) -> Result<[usize; 1], TonCellError> {
+    fn get_refs_descriptor(&self, _level_mask: Option<u8>) -> Result<[u8; 1], TonCellError> {
         let mut level_mask = 0u8;
         if !self.proof {
             level_mask = if let Some(level_mask) = _level_mask {
@@ -223,11 +224,11 @@ impl Cell {
                 self.get_level_mask()?
             };
         }
-        let mut d1: [usize; 1] = [0];
+        let mut d1: [u8; 1] = [0];
         //d1[0] = this.refs.length + this.isExotic * 8 + this.hasHashes * 16 + levelMask * 32;
         // ton node variant used
         let is_exotic_val = if self.is_exotic { 1 } else { 0 };
-        d1[0] = self.references.len() + is_exotic_val * 8 + (level_mask as usize) * 32;
+        d1[0] = (self.references.len() + is_exotic_val * 8 + (level_mask as usize) * 32) as u8;
         Ok(d1)
     }
 
@@ -235,6 +236,13 @@ impl Cell {
         let rest_bits = self.bit_len % 8;
         let full_bytes = rest_bits == 0;
         self.data.len() as u8 * 2 - if full_bytes { 0 } else { 1 } //subtract 1 if the last byte is not full
+    }
+
+    fn depth_to_array(&self, depth: usize) -> [u8; 2] {
+        let mut d = [0; 2];
+        d[1] = (depth % 256) as u8;
+        d[0] = (depth / 256) as u8;
+        d
     }
 
     pub fn get_repr(&self) -> Result<Vec<u8>, TonCellError> {
@@ -285,6 +293,7 @@ impl Cell {
     pub fn finalize(&mut self) -> Result<(), TonCellError> {
         let bit_reader = BitArrayReader {
             array: self.data.clone(),
+            cursor: 0,
         };
 
         let mut _type = CellType::OrdinaryCell as u8;
@@ -375,9 +384,157 @@ impl Cell {
                 }
                 self.level_mask = self.references[0].level_mask >> 1;
             }
-            _ => {}
+            CellType::MerkleUpdateCell => {
+                if self.data.len() * 8 != 8 + (HASH_BYTES + DEPTH_BYTES) * 8 * 2 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enouch data for a MerkleUpdate special cell",
+                    ));
+                }
+                if self.references.len() != 2 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Wrong references count for a MerkleUpdate special cell",
+                    ));
+                }
+                let merkle_hash_0 = bit_reader.get_range(8, HASH_BYTES * 8);
+                let child_hash_0 = self.references[0].get_hash(0);
+                if !merkle_hash_0.eq(&child_hash_0) {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "First hash mismatch in a MerkleUpdate special cell",
+                    ));
+                }
+
+                if bit_reader.read_uint16(8 + 16 * HASH_BYTES)
+                    != self.references[0].get_depth(Some(0)) as u16
+                {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "First depth mismatch in a MerkleUpdate special cell",
+                    ));
+                }
+                if bit_reader.read_uint16(8 + 16 * HASH_BYTES + DEPTH_BYTES * 8)
+                    != self.references[1].get_depth(Some(0)) as u16
+                {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Second depth mismatch in a MerkleUpdate special cell",
+                    ));
+                }
+                self.level_mask =
+                    (self.references[0].level_mask | self.references[1].level_mask) >> 1;
+            }
+
+            _ => {
+                return Err(TonCellError::boc_deserialization_error(
+                    "Unknown special cell type",
+                ));
+            }
         }
 
+        let total_hash_count = self.get_hashes_count();
+        let hash_count = if _type == CellType::PrunnedBranchCell as u8 {
+            1
+        } else {
+            total_hash_count
+        };
+        let hash_i_offset = total_hash_count - hash_count;
+
+        self.hashes = vec![vec![]; hash_count as usize];
+        self.depth = vec![0; hash_count as usize];
+
+        let mut hash_i = 0;
+        let level = self.get_level();
+
+        for level_i in 0..level {
+            if !self.is_level_significant(level_i) {
+                continue;
+            }
+
+            if hash_i < hash_i_offset {
+                hash_i += 1;
+                continue;
+            }
+
+            let mut repr: Vec<u8> = vec![];
+
+            let new_level_mask = self.apply_level_mask(level_i);
+
+            let d1 = self.get_refs_descriptor(Some(new_level_mask))?;
+            let d2 = self.get_bits_descriptor();
+
+            repr = concat_bytes(&repr, &d1.to_vec());
+            repr = concat_bytes(&repr, &vec![d2]);
+
+            if hash_i == hash_i_offset {
+                if level_i != 0 && self.cell_type != CellType::PrunnedBranchCell as u8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Cannot deserialize cell",
+                    ));
+                }
+
+                repr = concat_bytes(&repr, &bit_reader.get_top_upped_array()?);
+            } else {
+                //debug_log("add to hash own " + (hash_i - hash_i_offset - 1) + " hash", bytesToHex(this.hashes[hash_i - hash_i_offset - 1]));
+
+                if level_i == 0 || self.cell_type == CellType::PrunnedBranchCell as u8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Cannot deserialize cell",
+                    ));
+                }
+
+                repr = concat_bytes(&repr, &self.hashes[(hash_i - hash_i_offset - 1) as usize]);
+            }
+            //if (type == Cell.MerkleProofCell || type == Cell.PrunnedBranchCell)
+            //    debug_log(" contains", bytesToHex(this.bits.getTopUppedArray()));
+            // console.log("Repr befor depth check: ", Buffer.from(repr).toString('hex'));
+            let dest_i = hash_i - hash_i_offset;
+
+            let mut depth = 0;
+            for i in &self.references {
+                let mut child_depth = 0;
+                if self.cell_type == CellType::MerkleProofCell as u8
+                    || self.cell_type == CellType::MerkleUpdateCell as u8
+                {
+                    child_depth = i.get_depth(Some(level_i + 1));
+                } else {
+                    child_depth = i.get_depth(Some(level_i));
+                }
+                // console.log(level_i);
+                // console.log("child bits", Buffer.from(i.bits.getTopUppedArray()).toString('hex'));
+                // console.log("child depth:", child_depth);
+                repr = concat_bytes(&repr, &i.depth_to_array(child_depth as usize).to_vec());
+                depth = std::cmp::max(depth, child_depth);
+            }
+
+            if self.references.len() != 0 {
+                if depth >= 1024 {
+                    return Err(TonCellError::boc_deserialization_error("Depth is too big"));
+                }
+
+                depth += 1;
+            }
+            self.depth[dest_i as usize] = depth as u16;
+
+            //debug_log("add to hash " + this.refs.length + " childs");
+            // children hash
+            // console.log("Repr of cell: ", Buffer.from(repr).toString('hex'));
+            for i in 0..self.references.len() {
+                if self.cell_type == CellType::MerkleProofCell as u8
+                    || self.cell_type == CellType::MerkleUpdateCell as u8
+                {
+                    // console.log("child type " + type + " lvl " + (level_i + 1) + " hash", bytesToHex(this.refs[i].getHash(level_i + 1)));
+                    repr = concat_bytes(&repr, &self.references[i].get_hash(level_i + 1));
+                } else {
+                    // console.log("child lvl " + level_i + "hash", bytesToHex(this.refs[i].getHash(level_i)));
+                    // console.log("LEVEL I:", level_i);
+
+                    repr = concat_bytes(&repr, &self.references[i].get_hash(level_i));
+                }
+            }
+
+            let mut hasher: Sha256 = Sha256::new();
+            hasher.update(repr);
+            self.hashes[dest_i as usize] = hasher.finalize()[..].to_vec();
+
+            hash_i += 1;
+        }
         Ok(())
     }
 
