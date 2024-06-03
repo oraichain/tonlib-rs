@@ -577,7 +577,6 @@ impl Cell {
 
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_in_msg_descr))?;
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_out_msg_descr))?;
-        // TODO: load shard block is currently wrong. Don't trust
         cell.load_ref_if_exist(ref_index, Some(Cell::load_shard_account_blocks))?;
         let rand_seed = parser.load_bits(256)?;
         let created_by = parser.load_bits(256)?;
@@ -857,7 +856,6 @@ impl Cell {
         println!("cell r1 type: {:?}", cell_r1.cell_type);
         println!("cell r1: {:?}", cell_r1.data);
         if cell_r1.cell_type == CellType::OrdinaryCell as u8 {
-            // TODO: impl
             // prev_blk_signatures
             Cell::load_hash_map_e(
                 &cell_r1,
@@ -910,7 +908,6 @@ impl Cell {
                         |ref_ref_cell: &Cell,
                          inner_inner_ref_index: &mut usize,
                          parser: &mut CellParser| {
-                            // TODO: parse load_shard_descr as well
                             Cell::load_bin_tree(ref_ref_cell, inner_inner_ref_index, parser)
                         },
                     ),
@@ -1032,7 +1029,11 @@ impl Cell {
             ),
         )?;
 
-        config_params.config = res.0.unwrap();
+        if let Some(config) = res.0 {
+            config_params.config = config;
+        } else {
+            return Err(TonCellError::cell_parser_error("No config params to load"));
+        }
         Ok(config_params)
     }
 
@@ -1046,7 +1047,6 @@ impl Cell {
             return Err(TonCellError::cell_parser_error("Invalid config cell"));
         }
         println!("config param number: {:?}", n.to_string());
-        // TODO: impl deserializing validator set
         // we dont need to implement all config params because each param is a cell ref -> they are independent.
         let n_str = n.to_string();
 

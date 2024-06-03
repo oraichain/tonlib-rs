@@ -433,7 +433,16 @@ mod tests {
         let block_extra = first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
-        println!("Block{:?}", block_extra);
+        let block_extra = block_extra.0.unwrap();
+        let validators = block_extra
+            .custom
+            .config
+            .config
+            .get("22")
+            .unwrap()
+            .as_ref()
+            .unwrap();
+        assert_eq!(validators.cur_validators.total.to_string(), "14");
         Ok(())
     }
 
@@ -471,7 +480,16 @@ mod tests {
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
 
-        // println!("Block{:?}", block_extra);
+        let block_extra = block_extra.0.unwrap();
+        let validators = block_extra
+            .custom
+            .config
+            .config
+            .get("22")
+            .unwrap()
+            .as_ref()
+            .unwrap();
+        assert_eq!(validators.cur_validators.total.to_string(), "343");
         Ok(())
     }
 }
