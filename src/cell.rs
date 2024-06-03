@@ -15,6 +15,7 @@ use bitstream_io::{BigEndian, BitReader, BitWrite, BitWriter};
 pub use builder::*;
 pub use dict_loader::*;
 pub use error::*;
+use log::debug;
 use num_bigint::BigUint;
 use num_traits::{FromPrimitive, One, ToPrimitive};
 pub use parser::*;
@@ -393,7 +394,7 @@ impl Cell {
         let reference = self.reference(ref_index.to_owned())?;
         *ref_index += 1;
         let mut new_parser = reference.parser();
-        println!(
+        debug!(
             "reference cell type, ref index and ref data: {:?}, {:?}, {:?}",
             reference.cell_type, ref_index, reference.data
         );
@@ -465,9 +466,9 @@ impl Cell {
         let gen_catchain_seqno = parser.load_u32(32)?;
         let min_ref_mc_seqno = parser.load_u32(32)?;
         let prev_key_block_seqno = parser.load_u32(32)?;
-        println!("prev key block seq no: {:?}", prev_key_block_seqno);
-        println!("flag & 1: {:?}", flags & 1);
-        println!("not master: {:?}", not_master);
+        debug!("prev key block seq no: {:?}", prev_key_block_seqno);
+        debug!("flag & 1: {:?}", flags & 1);
+        debug!("not master: {:?}", not_master);
 
         if flags & 1 > 0 {
             parser.load_global_version()?;
@@ -507,9 +508,9 @@ impl Cell {
         let seq_no = parser.load_u32(32)?;
         let root_hash = parser.load_bits(256)?;
         let file_hash = parser.load_bits(256)?;
-        println!("end_lt and seq_no: {:?}, {:?}", end_lt, seq_no);
-        println!("root hash: {:?}", root_hash);
-        println!("file hash: {:?}", file_hash);
+        debug!("end_lt and seq_no: {:?}, {:?}", end_lt, seq_no);
+        debug!("root hash: {:?}", root_hash);
+        debug!("file hash: {:?}", file_hash);
         // FIXME: return ext blk ref
         Ok(())
     }
@@ -550,11 +551,11 @@ impl Cell {
         if parser.load_u8(8)? != 0x04 {
             return Err(TonCellError::cell_parser_error("not a Merkle Update"));
         }
-        println!("current ref index: {:?}", ref_index);
+        debug!("current ref index: {:?}", ref_index);
         let old_hash = parser.load_bits(256)?;
         let new_hash = parser.load_bits(256)?;
-        println!("old hash: {:?}", old_hash);
-        println!("new hash: {:?}", new_hash);
+        debug!("old hash: {:?}", old_hash);
+        debug!("new hash: {:?}", new_hash);
         let old = cell.reference(*ref_index)?;
         *ref_index += 1;
         let new = cell.reference(*ref_index)?;
@@ -571,7 +572,7 @@ impl Cell {
             return Err(TonCellError::cell_parser_error("not a BlockExtra"));
         }
 
-        // println!("Cell hash: {:?}", cell.());
+        // debug!("Cell hash: {:?}", cell.());
 
         let mut block_extra = BlockExtra::default();
 
@@ -580,8 +581,8 @@ impl Cell {
         cell.load_ref_if_exist(ref_index, Some(Cell::load_shard_account_blocks))?;
         let rand_seed = parser.load_bits(256)?;
         let created_by = parser.load_bits(256)?;
-        println!("rand seed: {:?}", rand_seed);
-        println!("created by: {:?}", created_by);
+        debug!("rand seed: {:?}", rand_seed);
+        debug!("created by: {:?}", created_by);
 
         let res = cell.load_maybe_ref(
             ref_index,
@@ -674,7 +675,7 @@ impl Cell {
         };
         let mut hashmap = Hashmap::new(n, hash_map_fn);
         hashmap.deserialize_e(cell, ref_index, parser)?;
-        println!("data map: {:?}", hashmap.map);
+        debug!("data map: {:?}", hashmap.map);
         Ok(hashmap.map)
     }
 
@@ -714,8 +715,8 @@ impl Cell {
         Cell::load_account(cell, ref_index, parser)?;
         let last_trans_hash = parser.load_bits(256)?;
         let last_trans_lt = parser.load_u64(64)?;
-        println!("last trans hash: {:?}", last_trans_hash);
-        println!("last trans lt: {:?}", last_trans_lt);
+        debug!("last trans hash: {:?}", last_trans_hash);
+        debug!("last trans lt: {:?}", last_trans_lt);
         Ok(())
     }
 
@@ -729,7 +730,7 @@ impl Cell {
             return Err(TonCellError::cell_parser_error("not an AccountBlock"));
         }
         let account_addr = parser.load_bits(256)?;
-        println!("account addr load account block: {:?}", account_addr);
+        debug!("account addr load account block: {:?}", account_addr);
         Cell::load_hash_map_aug(
             cell,
             ref_index,
@@ -752,7 +753,7 @@ impl Cell {
         parser: &mut CellParser,
     ) -> Result<(), TonCellError> {
         let split_depth = parser.load_uint_le(30)?;
-        println!("split depth: {:?}", split_depth);
+        debug!("split depth: {:?}", split_depth);
         Cell::load_currency_collection(cell, ref_index, parser)?;
         Ok(())
     }
@@ -798,7 +799,7 @@ impl Cell {
             32,
             |cell: &Cell, ref_index: &mut usize, parser: &mut CellParser, _key: &BigUint| {
                 let result = parser.load_var_uinteger(32)?;
-                println!("load extra currency collection: {:?}", result);
+                debug!("load extra currency collection: {:?}", result);
                 Ok(Some(result))
             },
         )?;
@@ -826,8 +827,8 @@ impl Cell {
         }
         let old_hash = parser.load_bits(256)?;
         let new_hash = parser.load_bits(256)?;
-        println!("old hash load hash update: {:?}", old_hash);
-        println!("new hash load hash update: {:?}", new_hash);
+        debug!("old hash load hash update: {:?}", old_hash);
+        debug!("new hash load hash update: {:?}", new_hash);
         Ok(())
     }
 
@@ -851,10 +852,10 @@ impl Cell {
         let new_ref_index = &mut 0usize;
         // use a new parser to reset cell cursor, since we are handling a new cell.
         let cell_r1_parser = &mut cell_r1.parser();
-        println!("current cell data: {:?}", cell.data);
-        println!("ref index after all: {:?}", ref_index);
-        println!("cell r1 type: {:?}", cell_r1.cell_type);
-        println!("cell r1: {:?}", cell_r1.data);
+        debug!("current cell data: {:?}", cell.data);
+        debug!("ref index after all: {:?}", ref_index);
+        debug!("cell r1 type: {:?}", cell_r1.cell_type);
+        debug!("cell r1: {:?}", cell_r1.data);
         if cell_r1.cell_type == CellType::OrdinaryCell as u8 {
             // prev_blk_signatures
             Cell::load_hash_map_e(
@@ -961,7 +962,7 @@ impl Cell {
         _key: &BigUint,
     ) -> Result<Option<()>, TonCellError> {
         let node_id_short = parser.load_bits(256)?;
-        println!("node id short: {:?}", node_id_short);
+        debug!("node id short: {:?}", node_id_short);
         Cell::load_crypto_signature(cell, ref_index, parser)?;
         // We can safely ignore this since it is called in load_ref_if_exist
         Ok(Some(()))
@@ -999,7 +1000,7 @@ impl Cell {
         let mut config_params = ConfigParams::default();
 
         let config_addr = parser.load_bits(256)?;
-        println!("config addr: {:?}", config_addr);
+        debug!("config addr: {:?}", config_addr);
         let res = cell.load_ref_if_exist(
             ref_index,
             Some(
@@ -1046,7 +1047,7 @@ impl Cell {
         if parser.remaining_bits() < parser.bit_len || *ref_index != 0 {
             return Err(TonCellError::cell_parser_error("Invalid config cell"));
         }
-        println!("config param number: {:?}", n.to_string());
+        debug!("config param number: {:?}", n.to_string());
         // we dont need to implement all config params because each param is a cell ref -> they are independent.
         let n_str = n.to_string();
 

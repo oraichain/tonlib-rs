@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use bitstream_io::{BigEndian, BitRead, BitReader};
+use log::debug;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::identities::Zero;
 use num_traits::FromPrimitive;
@@ -246,7 +247,7 @@ impl CellParser<'_> {
         }
         let version = self.load_u32(32)?;
         let capabilities = self.load_u64(64)?;
-        println!(
+        debug!(
             "version and capabilities: {:?}, {:?}",
             version, capabilities
         );

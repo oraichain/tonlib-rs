@@ -3,6 +3,7 @@ use std::io::Cursor;
 use bitstream_io::{BigEndian, BitWrite, BitWriter, ByteRead, ByteReader};
 use crc::Crc;
 use lazy_static::lazy_static;
+use log::debug;
 
 use crate::cell::{Cell, MapTonCellError, TonCellError};
 
@@ -101,7 +102,7 @@ impl RawBagOfCells {
         let serial_size = serial.len();
 
         let total_bytes_unread = serial.len() - (cur_cursor / 8) as usize;
-        println!("total bytes unread: {:?}", total_bytes_unread);
+        debug!("total bytes unread: {:?}", total_bytes_unread);
         if total_bytes_unread < _tot_cells_size {
             return Err(TonCellError::boc_deserialization_error(
                 "Not enough bytes for cells data",
