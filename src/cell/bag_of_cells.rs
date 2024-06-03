@@ -64,6 +64,11 @@ impl BagOfCells {
                 bit_len: raw_cell.bit_len,
                 references: Vec::new(),
                 cell_type: raw_cell.cell_type,
+                level_mask: raw_cell.max_level,
+                is_exotic: raw_cell.is_exotic,
+                has_hashes: raw_cell.has_hashes,
+                proof: false,
+                hashes: vec![], // FIXME: should this be empty initially?
             };
             for r in &raw_cell.references {
                 if *r <= i {
@@ -177,8 +182,10 @@ impl BagOfCells {
                 data: cell.data.clone(),
                 bit_len: cell.bit_len,
                 references: refs,
-                max_level: cell.get_max_level(),
+                max_level: cell.get_level_mask()?,
                 cell_type: cell.cell_type,
+                is_exotic: cell.is_exotic,
+                has_hashes: cell.has_hashes,
             };
             cells.push(raw);
         }

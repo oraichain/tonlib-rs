@@ -5,7 +5,7 @@ use crc::Crc;
 use lazy_static::lazy_static;
 use log::debug;
 
-use crate::cell::{Cell, MapTonCellError, TonCellError};
+use crate::cell::{MapTonCellError, TonCellError};
 
 lazy_static! {
     pub static ref CRC_32_ISCSI: Crc<u32> = Crc::<u32>::new(&crc::CRC_32_ISCSI);
@@ -28,8 +28,10 @@ pub(crate) struct RawCell {
     pub(crate) data: Vec<u8>,
     pub(crate) bit_len: usize,
     pub(crate) references: Vec<usize>,
-    pub(crate) max_level: u8,
+    pub(crate) max_level: u8, // same as level_mask
     pub(crate) cell_type: u8,
+    pub(crate) is_exotic: bool,
+    pub(crate) has_hashes: bool,
 }
 
 /// Raw representation of BagOfCells.
@@ -275,6 +277,8 @@ fn read_cell(
         references,
         max_level,
         cell_type,
+        is_exotic,
+        has_hashes,
     };
     Ok(cell)
 }
@@ -367,6 +371,8 @@ mod tests {
             references: vec![],
             max_level: 255,
             cell_type: CellType::OrdinaryCell as u8,
+            is_exotic: false,
+            has_hashes: false,
         };
         let raw_bag = RawBagOfCells {
             cells: vec![raw_cell],

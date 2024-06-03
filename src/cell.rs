@@ -51,6 +51,11 @@ pub struct Cell {
     pub bit_len: usize,
     pub references: Vec<ArcCell>,
     pub cell_type: u8,
+    pub level_mask: u8,
+    pub is_exotic: bool,
+    pub has_hashes: bool,
+    pub proof: bool,
+    pub hashes: Vec<Vec<u8>>,
 }
 
 impl Cell {
@@ -93,16 +98,79 @@ impl Cell {
         })
     }
 
-    pub fn get_max_level(&self) -> u8 {
-        //TODO level calculation differ for exotic cells
-        let mut max_level = 0;
-        for k in &self.references {
-            let level = k.get_max_level();
-            if level > max_level {
-                max_level = level;
+    fn get_level_from_mask(mut mask: u8) -> u8 {
+        for i in 0..3 {
+            if mask == 0 {
+                return i;
             }
+            mask = mask >> 1;
         }
-        max_level
+        3
+    }
+
+    fn get_hashes_count_from_mask(mut mask: u8) -> u8 {
+        let mut n = 0;
+        for i in 0..3 {
+            n += (mask & 1);
+            mask = mask >> 1;
+        }
+        return n + 1; // 1 repr + up to 3 higher hashes
+    }
+
+    fn get_level(&self) -> u8 {
+        self.level_mask & 7
+    }
+
+    fn get_hashes_count(&self) -> u8 {
+        return Cell::get_hashes_count_from_mask(self.level_mask & 7);
+    }
+
+    fn is_level_significant(&self, level: u8) -> bool {
+        level == 0 || (self.level_mask >> (level - 1)) % 2 != 0
+    }
+
+    fn apply_level_mask(&self, level: u8) -> u8 {
+        self.level_mask & ((1 << level) - 1)
+    }
+
+    fn get_level_mask(&self) -> Result<u8, TonCellError> {
+        if self.is_exotic && self.cell_type != CellType::LibraryCell as u8 {
+            // console.log(this.type);
+            if self.cell_type == CellType::PrunnedBranchCell as u8 {
+                return Ok(self.level_mask);
+            }
+            if self.cell_type == CellType::MerkleProofCell as u8 {
+                return Ok(self.reference(0)?.get_level_mask()? >> 1);
+            }
+            if self.cell_type == CellType::MerkleUpdateCell as u8 {
+                return Ok(self.reference(0)?.get_level_mask()?
+                    | self.reference(1)?.get_level_mask()? >> 1);
+            }
+            return Err(TonCellError::cell_parser_error("Unknown special cell type"));
+        } else {
+            let mut level_mask = 0;
+            for i in 0..self.references.len() {
+                let reference = self.reference(i)?;
+                level_mask |= reference.get_level_mask()?;
+            }
+            return Ok(level_mask);
+        }
+    }
+
+    fn get_hash(&self, level: u8) -> Vec<u8> {
+        let mut hash_i = Cell::get_hashes_count_from_mask(self.apply_level_mask(level)) - 1;
+        // console.log("HASH_I:", hash_i);
+        if self.cell_type == CellType::PrunnedBranchCell as u8 {
+            // console.log('Is pruned')
+            let this_hash_i = self.get_hashes_count() - 1;
+            if hash_i != this_hash_i {
+                // console.log("got data from bits", this_hash_i, hash_i, Buffer.from(this.bits.getRange(16 + hash_i * hash_bytes * 8, 256)).toString('hex'));
+                // FIXME: return get_range
+                return vec![];
+            }
+            hash_i = 0;
+        }
+        return self.hashes[hash_i as usize].clone();
     }
 
     fn get_max_depth(&self) -> usize {
@@ -119,8 +187,21 @@ impl Cell {
         max_depth
     }
 
-    fn get_refs_descriptor(&self) -> u8 {
-        self.references.len() as u8 + self.get_max_level() * 32
+    fn get_refs_descriptor(&self, _level_mask: Option<u8>) -> Result<[usize; 1], TonCellError> {
+        let mut level_mask = 0u8;
+        if !self.proof {
+            level_mask = if let Some(level_mask) = _level_mask {
+                level_mask
+            } else {
+                self.get_level_mask()?
+            };
+        }
+        let mut d1: [usize; 1] = [0];
+        //d1[0] = this.refs.length + this.isExotic * 8 + this.hasHashes * 16 + levelMask * 32;
+        // ton node variant used
+        let is_exotic_val = if self.is_exotic { 1 } else { 0 };
+        d1[0] = self.references.len() + is_exotic_val * 8 + (level_mask as usize) * 32;
+        Ok(d1)
     }
 
     fn get_bits_descriptor(&self) -> u8 {
@@ -134,8 +215,10 @@ impl Cell {
         let rest_bits = self.bit_len % 8;
         let full_bytes = rest_bits == 0;
         let mut writer = BitWriter::endian(Vec::new(), BigEndian);
-        let val = self.get_refs_descriptor();
-        writer.write(8, val).map_boc_serialization_error()?;
+        let val = self.get_refs_descriptor(None)?;
+        writer
+            .write(8, val[0] as u32)
+            .map_boc_serialization_error()?;
         writer
             .write(8, self.get_bits_descriptor())
             .map_boc_serialization_error()?;
