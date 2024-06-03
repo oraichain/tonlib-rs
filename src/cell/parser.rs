@@ -10,8 +10,6 @@ use crate::address::TonAddress;
 use crate::cell::util::*;
 use crate::cell::{MapTonCellError, TonCellError};
 
-use super::Cell;
-
 pub struct CellParser<'a> {
     pub(crate) bit_len: usize,
     pub(crate) bit_reader: BitReader<Cursor<&'a Vec<u8>>, BigEndian>,

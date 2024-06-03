@@ -55,7 +55,9 @@ impl BagOfCells {
 
     pub fn parse(serial: &[u8]) -> Result<BagOfCells, TonCellError> {
         let raw = RawBagOfCells::parse(serial)?;
+
         let num_cells = raw.cells.len();
+        println!("len {:?}", raw.cells[0]);
         let mut cells: Vec<ArcCell> = Vec::new();
         for i in (0..num_cells).rev() {
             let raw_cell = &raw.cells[i];
@@ -69,6 +71,7 @@ impl BagOfCells {
                 has_hashes: raw_cell.has_hashes,
                 proof: false,
                 hashes: vec![], // FIXME: should this be empty initially?
+                depth: vec![],  // FIXME: should this be empty initially?
             };
             for r in &raw_cell.references {
                 if *r <= i {
@@ -78,6 +81,8 @@ impl BagOfCells {
                 }
                 cell.references.push(cells[num_cells - 1 - r].clone());
             }
+
+            cell.finalize()?;
             cells.push(Arc::new(cell));
         }
         let roots: Vec<ArcCell> = raw
@@ -413,6 +418,8 @@ mod tests {
 
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(boc).unwrap();
+
+        println!("Cell {:?}", cells.roots[0].hashes);
 
         let first_root = cells.single_root().unwrap();
         let mut parser = first_root.parser();

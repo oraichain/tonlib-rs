@@ -293,6 +293,7 @@ impl CellBuilder {
                 has_hashes,
                 proof: false,
                 hashes: vec![], // FIXME
+                depth: vec![],  // FIXME
             })
         } else {
             Err(TonCellError::CellBuilderError(

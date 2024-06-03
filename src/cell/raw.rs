@@ -20,6 +20,20 @@ pub enum CellType {
     MerkleUpdateCell = 4,
 }
 
+// Function to convert u8 to CellType
+impl CellType {
+    pub fn from_u8(value: u8) -> Option<CellType> {
+        match value {
+            255 => Some(CellType::OrdinaryCell),
+            1 => Some(CellType::PrunnedBranchCell),
+            2 => Some(CellType::LibraryCell),
+            3 => Some(CellType::MerkleProofCell),
+            4 => Some(CellType::MerkleUpdateCell),
+            _ => None, // Return None if the value doesn't match any variant
+        }
+    }
+}
+
 /// Raw representation of Cell.
 ///
 /// References are stored as indices in BagOfCells.

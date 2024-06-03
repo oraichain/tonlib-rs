@@ -10,8 +10,9 @@ use std::sync::Arc;
 pub use bag_of_cells::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use bit_reader::BitArrayReader;
 use bit_string::*;
-use bitstream_io::{BigEndian, BitReader, BitWrite, BitWriter};
+use bitstream_io::{BigEndian, BitReader, BitWrite, BitWriter, ByteRead, ByteReader};
 pub use builder::*;
 pub use dict_loader::*;
 pub use error::*;
@@ -31,6 +32,7 @@ use crate::responses::{
 };
 
 mod bag_of_cells;
+mod bit_reader;
 mod bit_string;
 mod builder;
 mod dict_loader;
@@ -45,6 +47,9 @@ pub type ArcCell = Arc<Cell>;
 
 pub type SnakeFormattedDict = HashMap<[u8; 32], Vec<u8>>;
 
+pub const HASH_BYTES: usize = 32;
+pub const DEPTH_BYTES: usize = 2;
+
 #[derive(PartialEq, Eq, Clone, Hash)]
 pub struct Cell {
     pub data: Vec<u8>,
@@ -56,6 +61,7 @@ pub struct Cell {
     pub has_hashes: bool,
     pub proof: bool,
     pub hashes: Vec<Vec<u8>>,
+    pub depth: Vec<u8>,
 }
 
 impl Cell {
@@ -118,7 +124,7 @@ impl Cell {
     }
 
     fn get_level(&self) -> u8 {
-        self.level_mask & 7
+        Cell::get_level_from_mask(self.level_mask & 7)
     }
 
     fn get_hashes_count(&self) -> u8 {
@@ -171,6 +177,27 @@ impl Cell {
             hash_i = 0;
         }
         return self.hashes[hash_i as usize].clone();
+    }
+
+    fn get_depth(&self, level: Option<u8>) -> u64 {
+        let mut hash_i = Cell::get_hashes_count_from_mask(Cell::apply_level_mask(
+            &self,
+            level.unwrap_or_default(),
+        ));
+
+        if self.cell_type == CellType::PrunnedBranchCell as u8 {
+            let this_hash_i = self.get_hashes_count() - 1;
+            if hash_i != this_hash_i {
+                let bit_reader = BitArrayReader {
+                    array: self.data.clone(),
+                };
+                return bit_reader.read_uint16(
+                    16 + this_hash_i as usize * HASH_BYTES * 8 + hash_i as usize * DEPTH_BYTES * 8,
+                ) as u64;
+            }
+            hash_i = 0;
+        }
+        return self.depth[hash_i as usize] as u64;
     }
 
     fn get_max_depth(&self) -> usize {
@@ -253,6 +280,105 @@ impl Cell {
             .ok_or_else(|| TonCellError::cell_builder_error("Stream is not byte-aligned"))
             .map(|b| b.to_vec());
         result
+    }
+
+    pub fn finalize(&mut self) -> Result<(), TonCellError> {
+        let bit_reader = BitArrayReader {
+            array: self.data.clone(),
+        };
+
+        let mut _type = CellType::OrdinaryCell as u8;
+        if self.is_exotic {
+            if self.bit_len < 8 {
+                return Err(TonCellError::boc_deserialization_error(
+                    "Not enough data for a special cell",
+                ));
+            }
+
+            _type = bit_reader.read_uint8(0);
+            if _type == CellType::OrdinaryCell as u8 {
+                return Err(TonCellError::boc_deserialization_error(
+                    "Special cell has Ordinary type",
+                ));
+            }
+        }
+        self.cell_type = _type;
+        // println!("Cell Type {:?}", _type);
+
+        match CellType::from_u8(_type).unwrap() {
+            CellType::OrdinaryCell => {
+                if self.proof != true {
+                    for k in &self.references {
+                        self.level_mask |= k.level_mask;
+                    }
+                }
+            }
+            CellType::PrunnedBranchCell => {
+                if self.references.len() != 0 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "PrunnedBranch special cell has a cell reference",
+                    ));
+                }
+                if self.data.len() < 16 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enough data for a PrunnedBranch special cell",
+                    ));
+                }
+                self.level_mask = bit_reader.read_uint8(8);
+                let level = self.get_level();
+                if level > 3 || level == 0 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Prunned Branch has an invalid level",
+                    ));
+                }
+                let new_level_mask = self.apply_level_mask(level - 1);
+                let hashes = Cell::get_hashes_count_from_mask(new_level_mask);
+
+                if self.data.len() * 8 < (2 + hashes as usize * (HASH_BYTES + DEPTH_BYTES)) * 8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enouch data for a PrunnedBranch special cell",
+                    ));
+                }
+            }
+            CellType::LibraryCell => {
+                if self.data.len() * 8 < 8 + HASH_BYTES * 8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enouch data for a Library special cell",
+                    ));
+                }
+            }
+            CellType::MerkleProofCell => {
+                if self.data.len() * 8 != 8 + (HASH_BYTES + DEPTH_BYTES) * 8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enouch data for a MerkleProof special cell",
+                    ));
+                }
+                if self.references.len() != 1 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Wrong references count for a MerkleProof special cell",
+                    ));
+                }
+                let merkle_hash = bit_reader.get_range(8, HASH_BYTES * 8);
+                let child_hash = self.references[0].get_hash(0);
+
+                if !merkle_hash.eq(&child_hash) {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Hash mismatch in a MerkleProof special cell",
+                    ));
+                }
+                if bit_reader.read_uint16(8 + HASH_BYTES * 8)
+                    != self.references[0].get_depth(Some(0)) as u16
+                {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Depth mismatch in a MerkleProof special cell",
+                    ));
+                }
+                self.level_mask = self.references[0].level_mask >> 1;
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 
     pub fn cell_hash(&self) -> Result<Vec<u8>, TonCellError> {
