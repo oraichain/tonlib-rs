@@ -1,6 +1,9 @@
+use super::TonCellError;
+
 #[derive(Clone)]
 pub struct BitArrayReader {
     pub array: Vec<u8>,
+    pub cursor: usize,
 }
 
 impl BitArrayReader {
@@ -61,5 +64,58 @@ impl BitArrayReader {
         }
 
         result
+    }
+
+    /**
+     * Gets Top Upped Array (see TON docs)
+     *
+     * @return {Uint8Array}
+     */
+    pub fn get_top_upped_array(&self) -> Result<Vec<u8>, TonCellError> {
+        let mut ret = self.clone();
+
+        let mut tu = ((ret.cursor + 7) / 8 * 8) - ret.cursor;
+        if tu > 0 {
+            tu = tu - 1;
+            ret.write_bit(true as usize)?;
+            while tu > 0 {
+                tu = tu - 1;
+                ret.write_bit(false as usize)?;
+            }
+        }
+        ret.array.truncate((ret.cursor + 7) / 8);
+        return Ok(ret.array);
+    }
+
+    fn write_bit(&mut self, b: usize) -> Result<(), TonCellError> {
+        if b > 0 {
+            self.on(self.cursor)?;
+        } else {
+            self.off(self.cursor)?;
+        }
+
+        self.cursor += 1;
+        Ok(())
+    }
+
+    /// Sets bit value to 1 at position `n`
+    fn on(&mut self, n: usize) -> Result<(), TonCellError> {
+        self.check_range(n)?;
+        self.array[n / 8] |= 1 << (7 - (n % 8));
+        Ok(())
+    }
+
+    /// Sets bit value to 0 at position `n`
+    fn off(&mut self, n: usize) -> Result<(), TonCellError> {
+        self.check_range(n)?;
+        self.array[n / 8] &= !(1 << (7 - (n % 8)));
+        Ok(())
+    }
+
+    fn check_range(&self, n: usize) -> Result<(), TonCellError> {
+        if n > self.array.len() {
+            return Err(TonCellError::cell_parser_error("Bit data overflow"));
+        }
+        Ok(())
     }
 }
