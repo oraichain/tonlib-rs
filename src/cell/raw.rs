@@ -274,6 +274,7 @@ fn read_cell(
         0
     };
     let bit_len = data.len() * 8 - padding_len as usize;
+
     let mut references: Vec<usize> = Vec::new();
     for _ in 0..ref_num {
         references.push(read_var_size(reader, size)?);

@@ -57,7 +57,7 @@ impl BagOfCells {
         let raw = RawBagOfCells::parse(serial)?;
 
         let num_cells = raw.cells.len();
-        println!("len {:?}", raw.cells[0]);
+
         let mut cells: Vec<ArcCell> = Vec::new();
         for i in (0..num_cells).rev() {
             let raw_cell = &raw.cells[i];
@@ -85,6 +85,7 @@ impl BagOfCells {
             cell.finalize()?;
             cells.push(Arc::new(cell));
         }
+
         let roots: Vec<ArcCell> = raw
             .roots
             .iter()
@@ -419,7 +420,8 @@ mod tests {
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(boc).unwrap();
 
-        println!("Cell {:?}", cells.roots[0].hashes);
+        println!("Cell Hashes {:?}", cells.roots[0].hashes);
+        println!("Cell Depth {:?}", cells.roots[0].depth);
 
         let first_root = cells.single_root().unwrap();
         let mut parser = first_root.parser();

@@ -101,19 +101,19 @@ impl BitArrayReader {
     /// Sets bit value to 1 at position `n`
     fn on(&mut self, n: usize) -> Result<(), TonCellError> {
         self.check_range(n)?;
-        self.array[n / 8] |= 1 << (7 - (n % 8));
+        self.array[n / 8 | 0] |= 1 << (7 - (n % 8));
         Ok(())
     }
 
     /// Sets bit value to 0 at position `n`
     fn off(&mut self, n: usize) -> Result<(), TonCellError> {
         self.check_range(n)?;
-        self.array[n / 8] &= !(1 << (7 - (n % 8)));
+        self.array[n / 8 | 0] &= !(1 << (7 - (n % 8)));
         Ok(())
     }
 
     fn check_range(&self, n: usize) -> Result<(), TonCellError> {
-        if n > self.array.len() {
+        if n > self.array.len() * 8 {
             return Err(TonCellError::cell_parser_error("Bit data overflow"));
         }
         Ok(())

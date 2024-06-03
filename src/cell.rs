@@ -190,7 +190,7 @@ impl Cell {
             if hash_i != this_hash_i {
                 let bit_reader = BitArrayReader {
                     array: self.data.clone(),
-                    cursor: 0,
+                    cursor: self.bit_len,
                 };
                 return bit_reader.read_uint16(
                     16 + this_hash_i as usize * HASH_BYTES * 8 + hash_i as usize * DEPTH_BYTES * 8,
@@ -294,7 +294,7 @@ impl Cell {
     pub fn finalize(&mut self) -> Result<(), TonCellError> {
         let bit_reader = BitArrayReader {
             array: self.data.clone(),
-            cursor: 0,
+            cursor: self.bit_len,
         };
 
         let mut _type = CellType::OrdinaryCell as u8;
@@ -443,7 +443,7 @@ impl Cell {
         let mut hash_i = 0;
         let level = self.get_level();
 
-        for level_i in 0..level {
+        for level_i in 0..=level {
             if !self.is_level_significant(level_i) {
                 continue;
             }
@@ -534,6 +534,8 @@ impl Cell {
 
             hash_i += 1;
         }
+        // println!("hashes {:?}", self.hashes);
+        // println!("depth {:?}", self.depth);
         Ok(())
     }
 
@@ -1505,15 +1507,23 @@ impl Cell {
 }
 
 impl Debug for Cell {
+    // pub proof: bool,
+    // pub hashes: Vec<Vec<u8>>,
+    // pub depth: Vec<u16>,
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "Cell{{ data: [{}], bit_len: {}, references: [\n",
+            "Cell{{ data: [{}], cell_type: {}, level_mask: {}, is_exotic: {}, has_hashes: {}, ,proof: {}, bit_len: {}, references: [\n",
             self.data
                 .iter()
                 .map(|&byte| format!("{:02X}", byte))
                 .collect::<Vec<_>>()
                 .join(""),
+            self.cell_type,
+            self.level_mask,
+            self.is_exotic,
+            self.has_hashes,
+            self.proof,
             self.bit_len,
         )?;
 
@@ -1523,6 +1533,14 @@ impl Debug for Cell {
                 "    {}\n",
                 format!("{:?}", reference).replace('\n', "\n    ")
             )?;
+        }
+        write!(f, "], hashes:[ ")?;
+        for hash_vec in &self.hashes {
+            writeln!(f, "[{:?}]", hash_vec)?;
+        }
+        write!(f, "], depth:[ ")?;
+        for depth in &self.depth {
+            writeln!(f, "[{:?}]", depth)?;
         }
 
         write!(f, "] }}")
