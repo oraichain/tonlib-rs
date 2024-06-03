@@ -25,15 +25,15 @@ impl BitArrayReader {
      * @return {Uint8Array} [start:start+n] bits
      */
     pub fn get_range(&self, start: usize, n: usize) -> Vec<u8> {
-        let mut array: Vec<u8> = vec![];
+        let mut array: Vec<u8> = vec![0; ((n + 7) / 8) as usize];
         let mut cursor = 0;
         for x in start..start + n {
             let b = self.get(x);
 
             if b {
-                array[(cursor / 8) as usize] |= 1 << (7 - (cursor % 8));
+                array[(cursor / 8) as usize | 0] |= 1 << (7 - (cursor % 8));
             } else {
-                array[(cursor / 8) as usize] &= !(1 << (7 - (cursor % 8)));
+                array[(cursor / 8) as usize | 0] &= !(1 << (7 - (cursor % 8)));
             }
 
             cursor += 1;

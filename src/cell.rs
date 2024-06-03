@@ -171,8 +171,11 @@ impl Cell {
             let this_hash_i = self.get_hashes_count() - 1;
             if hash_i != this_hash_i {
                 // console.log("got data from bits", this_hash_i, hash_i, Buffer.from(this.bits.getRange(16 + hash_i * hash_bytes * 8, 256)).toString('hex'));
-                // FIXME: return get_range
-                return vec![];
+                let bit_reader = BitArrayReader {
+                    array: self.data.clone(),
+                    cursor: self.bit_len,
+                };
+                return bit_reader.get_range(16 + hash_i as usize * HASH_BYTES * 8, 256);
             }
             hash_i = 0;
         }
@@ -530,6 +533,7 @@ impl Cell {
 
             let mut hasher: Sha256 = Sha256::new();
             hasher.update(repr);
+
             self.hashes[dest_i as usize] = hasher.finalize()[..].to_vec();
 
             hash_i += 1;
