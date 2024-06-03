@@ -65,6 +65,7 @@ impl RawBagOfCells {
     pub(crate) fn parse(serial: &[u8]) -> Result<RawBagOfCells, TonCellError> {
         let cursor = Cursor::new(serial);
 
+        // parse header
         let mut reader: ByteReader<Cursor<&[u8]>, BigEndian> =
             ByteReader::endian(cursor, BigEndian);
         // serialized_boc#b5ee9c72
@@ -111,10 +112,16 @@ impl RawBagOfCells {
                 index.push(read_var_size(&mut reader, off_bytes)?)
             }
         }
+
+        // finish parse header
+
         //   cell_data:(tot_cells_size * [ uint8 ])
         // read_var_size(&mut reader, _tot_cells_size as u8)?;
         let mut cell_vec = Vec::with_capacity(cells);
-        let cur_cursor = reader.bitreader().position_in_bits().unwrap();
+        let cur_cursor = reader
+            .bitreader()
+            .position_in_bits()
+            .map_err(|err| TonCellError::boc_deserialization_error(err.to_string()))?;
         let serial_size = serial.len();
 
         let total_bytes_unread = serial.len() - (cur_cursor / 8) as usize;
@@ -129,13 +136,18 @@ impl RawBagOfCells {
             let cell = read_cell(&mut reader, size_bytes)?;
             cell_vec.push(cell);
         }
+
         //   crc32c:has_crc32c?uint32
         let _crc32c = if has_crc32c {
             reader.read::<u32>().map_boc_deserialization_error()?
         } else {
             0
         };
-        let position = reader.bitreader().position_in_bits().unwrap();
+
+        let position = reader
+            .bitreader()
+            .position_in_bits()
+            .map_err(|err| TonCellError::boc_deserialization_error(err.to_string()))?;
         // TODO: Check crc32
 
         Ok(RawBagOfCells {

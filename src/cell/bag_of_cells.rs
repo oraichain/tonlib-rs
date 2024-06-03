@@ -70,8 +70,8 @@ impl BagOfCells {
                 is_exotic: raw_cell.is_exotic,
                 has_hashes: raw_cell.has_hashes,
                 proof: false,
-                hashes: vec![], // FIXME: should this be empty initially?
-                depth: vec![],  // FIXME: should this be empty initially?
+                hashes: vec![],
+                depth: vec![],
             };
             for r in &raw_cell.references {
                 if *r <= i {
@@ -420,7 +420,7 @@ mod tests {
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(boc).unwrap();
 
-        println!("Cell Hashes {:?}", cells.roots[0].hashes);
+        println!("Cell Hashes {:?}", hex::encode(cells.roots[0].hashes[0].clone()));
         println!("Cell Depth {:?}", cells.roots[0].depth);
 
         let first_root = cells.single_root().unwrap();
@@ -470,7 +470,7 @@ mod tests {
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(key_block_data_with_block_extra_in_hex).unwrap();
 
-        println!("Cell Hashes {:?}", cells.roots[0].hashes);
+        println!("Cell Hashes {:?}", hex::encode(cells.roots[0].hashes[0].clone()));
         println!("Cell Depth {:?}", cells.roots[0].depth);
         let first_root = cells.single_root().unwrap();
         let mut parser = first_root.parser();

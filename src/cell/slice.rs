@@ -162,8 +162,8 @@ impl CellSlice {
             is_exotic,
             has_hashes,
             proof: false,
-            hashes: vec![], // FIXME
-            depth: vec![],  // FIXME
+            hashes: vec![],
+            depth: vec![],
         };
         Ok(cell)
     }

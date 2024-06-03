@@ -170,12 +170,11 @@ impl Cell {
             // console.log('Is pruned')
             let this_hash_i = self.get_hashes_count() - 1;
             if hash_i != this_hash_i {
-                // console.log("got data from bits", this_hash_i, hash_i, Buffer.from(this.bits.getRange(16 + hash_i * hash_bytes * 8, 256)).toString('hex'));
                 let bit_reader = BitArrayReader {
                     array: self.data.clone(),
-                    cursor: self.bit_len,
+                    cursor: 0,
                 };
-                return bit_reader.get_range(16 + hash_i as usize * HASH_BYTES * 8, 256);
+                return bit_reader.get_range(16 + (hash_i as usize) * HASH_BYTES * 8, 256);
             }
             hash_i = 0;
         }
@@ -498,9 +497,6 @@ impl Cell {
                 } else {
                     child_depth = i.get_depth(Some(level_i));
                 }
-                // console.log(level_i);
-                // console.log("child bits", Buffer.from(i.bits.getTopUppedArray()).toString('hex'));
-                // console.log("child depth:", child_depth);
                 repr = concat_bytes(&repr, &i.depth_to_array(child_depth as usize).to_vec());
                 depth = std::cmp::max(depth, child_depth);
             }
@@ -514,19 +510,13 @@ impl Cell {
             }
             self.depth[dest_i as usize] = depth as u16;
 
-            //debug_log("add to hash " + this.refs.length + " childs");
             // children hash
-            // console.log("Repr of cell: ", Buffer.from(repr).toString('hex'));
             for i in 0..self.references.len() {
                 if self.cell_type == CellType::MerkleProofCell as u8
                     || self.cell_type == CellType::MerkleUpdateCell as u8
                 {
-                    // console.log("child type " + type + " lvl " + (level_i + 1) + " hash", bytesToHex(this.refs[i].getHash(level_i + 1)));
                     repr = concat_bytes(&repr, &self.references[i].get_hash(level_i + 1));
                 } else {
-                    // console.log("child lvl " + level_i + "hash", bytesToHex(this.refs[i].getHash(level_i)));
-                    // console.log("LEVEL I:", level_i);
-
                     repr = concat_bytes(&repr, &self.references[i].get_hash(level_i));
                 }
             }

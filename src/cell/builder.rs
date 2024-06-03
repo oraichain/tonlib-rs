@@ -292,8 +292,8 @@ impl CellBuilder {
                 level_mask,
                 has_hashes,
                 proof: false,
-                hashes: vec![], // FIXME
-                depth: vec![],  // FIXME
+                hashes: vec![],
+                depth: vec![],
             })
         } else {
             Err(TonCellError::CellBuilderError(
