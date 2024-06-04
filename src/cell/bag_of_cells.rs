@@ -214,6 +214,7 @@ mod tests {
 
     use crate::cell::{BagOfCells, Cell, CellBuilder, TonCellError};
     use crate::message::ZERO_COINS;
+    use crate::responses::ConfigParam;
 
     #[test]
     fn cell_repr_works() -> anyhow::Result<()> {
@@ -420,7 +421,10 @@ mod tests {
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(boc).unwrap();
 
-        println!("Cell Hashes {:?}", hex::encode(cells.roots[0].hashes[0].clone()));
+        println!(
+            "Cell Hashes {:?}",
+            hex::encode(cells.roots[0].hashes[0].clone())
+        );
         println!("Cell Depth {:?}", cells.roots[0].depth);
 
         let first_root = cells.single_root().unwrap();
@@ -450,7 +454,7 @@ mod tests {
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
         let block_extra = block_extra.0.unwrap();
-        let validators = block_extra
+        let param = block_extra
             .custom
             .config
             .config
@@ -458,8 +462,13 @@ mod tests {
             .unwrap()
             .as_ref()
             .unwrap();
-        // println!("{:?}", validators);
-        assert_eq!(validators.cur_validators.total.to_string(), "14");
+
+        match param {
+            ConfigParam::ConfigParams34(validators) => {
+                assert_eq!(validators.cur_validators.total.to_string(), "14");
+            }
+            _ => panic!("Wrong config parameter"),
+        }
         Ok(())
     }
 
@@ -471,7 +480,10 @@ mod tests {
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(key_block_data_with_block_extra_in_hex).unwrap();
 
-        println!("Cell Hashes {:?}", hex::encode(cells.roots[0].hashes[0].clone()));
+        println!(
+            "Cell Hashes {:?}",
+            hex::encode(cells.roots[0].hashes[0].clone())
+        );
         println!("Cell Depth {:?}", cells.roots[0].depth);
         let first_root = cells.single_root().unwrap();
         let mut parser = first_root.parser();
@@ -501,7 +513,7 @@ mod tests {
             .unwrap();
 
         let block_extra = block_extra.0.unwrap();
-        let validators = block_extra
+        let param = block_extra
             .custom
             .config
             .config
@@ -509,7 +521,32 @@ mod tests {
             .unwrap()
             .as_ref()
             .unwrap();
-        assert_eq!(validators.cur_validators.total.to_string(), "343");
+
+        let prev_validator_param = block_extra
+            .custom
+            .config
+            .config
+            .get("20")
+            .unwrap()
+            .as_ref()
+            .unwrap();
+
+        let next_validator_param = block_extra.custom.config.config.get("24");
+
+        match param {
+            ConfigParam::ConfigParams34(validators) => {
+                assert_eq!(validators.cur_validators.total.to_string(), "343");
+            }
+            _ => panic!("Wrong config parameter"),
+        }
+
+        match prev_validator_param {
+            ConfigParam::ConfigParams32(validators) => {
+                assert_eq!(validators.prev_validators.total.to_string(), "334");
+            }
+            _ => panic!("Wrong config parameter"),
+        }
+        assert_eq!(next_validator_param.is_none(), true);
         Ok(())
     }
 }

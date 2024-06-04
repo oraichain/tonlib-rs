@@ -28,7 +28,8 @@ pub use util::*;
 
 use crate::hashmap::Hashmap;
 use crate::responses::{
-    BlockExtra, ConfigParams, ConfigParams34, CurrentValidators, McBlockExtra, ValidatorDescr,
+    BlockExtra, ConfigParam, ConfigParams, ConfigParams32, ConfigParams34, ConfigParams36,
+    McBlockExtra, ValidatorDescr, Validators,
 };
 
 mod bag_of_cells;
@@ -117,7 +118,7 @@ impl Cell {
     fn get_hashes_count_from_mask(mut mask: u8) -> u8 {
         let mut n = 0;
         for i in 0..3 {
-            n += (mask & 1);
+            n += mask & 1;
             mask = mask >> 1;
         }
         return n + 1; // 1 repr + up to 3 higher hashes
@@ -1404,7 +1405,7 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<Option<ConfigParams34>, TonCellError> {
+    ) -> Result<Option<ConfigParam>, TonCellError> {
         if parser.remaining_bits() < parser.bit_len || *ref_index != 0 {
             return Err(TonCellError::cell_parser_error("Invalid config cell"));
         }
@@ -1413,12 +1414,36 @@ impl Cell {
         let n_str = n.to_string();
 
         // validator set
+        if n_str == "32" {
+            return Ok(Some(ConfigParam::ConfigParams32(
+                Cell::load_config_param_32(cell, ref_index, parser, n)?,
+            )));
+        }
         if n_str == "34" {
-            return Ok(Some(Cell::load_config_param_34(
-                cell, ref_index, parser, n,
-            )?));
+            return Ok(Some(ConfigParam::ConfigParams34(
+                Cell::load_config_param_34(cell, ref_index, parser, n)?,
+            )));
+        }
+        if n_str == "36" {
+            return Ok(Some(ConfigParam::ConfigParams36(
+                Cell::load_config_param_36(cell, ref_index, parser, n)?,
+            )));
         }
         Ok(None)
+    }
+
+    pub fn load_config_param_32(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: &BigUint,
+    ) -> Result<ConfigParams32, TonCellError> {
+        let mut config_param = ConfigParams32::default();
+        config_param.number = 32;
+
+        let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
+        config_param.prev_validators = validators;
+        Ok(config_param)
     }
 
     pub fn load_config_param_34(
@@ -1435,13 +1460,27 @@ impl Cell {
         Ok(config_params_34)
     }
 
+    pub fn load_config_param_36(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: &BigUint,
+    ) -> Result<ConfigParams36, TonCellError> {
+        let mut config_param = ConfigParams36::default();
+        config_param.number = 36;
+
+        let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
+        config_param.next_validators = validators;
+        Ok(config_param)
+    }
+
     pub fn load_validator_set(
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<CurrentValidators, TonCellError> {
-        let mut curr_vals = CurrentValidators::default();
+    ) -> Result<Validators, TonCellError> {
+        let mut curr_vals = Validators::default();
 
         let _type = parser.load_u8(8)?;
         if _type == 0x11 {
