@@ -465,7 +465,7 @@ mod tests {
 
         match param {
             ConfigParam::ConfigParams34(validators) => {
-                assert_eq!(validators.cur_validators.total.to_string(), "14");
+                assert_eq!(validators.validators.total.to_string(), "14");
             }
             _ => panic!("Wrong config parameter"),
         }
@@ -535,14 +535,14 @@ mod tests {
 
         match param {
             ConfigParam::ConfigParams34(validators) => {
-                assert_eq!(validators.cur_validators.total.to_string(), "343");
+                assert_eq!(validators.validators.total.to_string(), "343");
             }
             _ => panic!("Wrong config parameter"),
         }
 
         match prev_validator_param {
             ConfigParam::ConfigParams32(validators) => {
-                assert_eq!(validators.prev_validators.total.to_string(), "334");
+                assert_eq!(validators.validators.total.to_string(), "334");
             }
             _ => panic!("Wrong config parameter"),
         }

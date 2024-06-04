@@ -28,27 +28,15 @@ pub struct ConfigParams {
 
 #[derive(Clone, Debug)]
 pub enum ConfigParam {
-    ConfigParams32(ConfigParams32),
-    ConfigParams34(ConfigParams34),
-    ConfigParams36(ConfigParams36),
+    ConfigParams32(ConfigParamsValidatorSet),
+    ConfigParams34(ConfigParamsValidatorSet),
+    ConfigParams36(ConfigParamsValidatorSet),
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ConfigParams36 {
+pub struct ConfigParamsValidatorSet {
     pub number: u8,
-    pub next_validators: Validators,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ConfigParams34 {
-    pub number: u8,
-    pub cur_validators: Validators,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ConfigParams32 {
-    pub number: u8,
-    pub prev_validators: Validators,
+    pub validators: Validators,
 }
 
 #[derive(Clone, Debug, Default)]

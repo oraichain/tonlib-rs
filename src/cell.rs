@@ -28,8 +28,8 @@ pub use util::*;
 
 use crate::hashmap::Hashmap;
 use crate::responses::{
-    BlockExtra, ConfigParam, ConfigParams, ConfigParams32, ConfigParams34, ConfigParams36,
-    McBlockExtra, ValidatorDescr, Validators,
+    BlockExtra, ConfigParam, ConfigParams, ConfigParamsValidatorSet, McBlockExtra, ValidatorDescr,
+    Validators,
 };
 
 mod bag_of_cells;
@@ -1415,7 +1415,7 @@ impl Cell {
 
         // validator set
         if n_str == "32" {
-            return Ok(Some(ConfigParam::ConfigParams32(
+            return Ok(Some(ConfigParam::ConfigParams34(
                 Cell::load_config_param_32(cell, ref_index, parser, n)?,
             )));
         }
@@ -1437,12 +1437,12 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<ConfigParams32, TonCellError> {
-        let mut config_param = ConfigParams32::default();
+    ) -> Result<ConfigParamsValidatorSet, TonCellError> {
+        let mut config_param = ConfigParamsValidatorSet::default();
         config_param.number = 32;
 
         let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
-        config_param.prev_validators = validators;
+        config_param.validators = validators;
         Ok(config_param)
     }
 
@@ -1451,12 +1451,12 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<ConfigParams34, TonCellError> {
-        let mut config_params_34 = ConfigParams34::default();
+    ) -> Result<ConfigParamsValidatorSet, TonCellError> {
+        let mut config_params_34 = ConfigParamsValidatorSet::default();
         config_params_34.number = 34;
 
         let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
-        config_params_34.cur_validators = validators;
+        config_params_34.validators = validators;
         Ok(config_params_34)
     }
 
@@ -1465,12 +1465,12 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<ConfigParams36, TonCellError> {
-        let mut config_param = ConfigParams36::default();
+    ) -> Result<ConfigParamsValidatorSet, TonCellError> {
+        let mut config_param = ConfigParamsValidatorSet::default();
         config_param.number = 36;
 
         let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
-        config_param.next_validators = validators;
+        config_param.validators = validators;
         Ok(config_param)
     }
 
