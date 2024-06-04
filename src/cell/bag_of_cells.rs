@@ -458,6 +458,7 @@ mod tests {
             .unwrap()
             .as_ref()
             .unwrap();
+        // println!("{:?}", validators);
         assert_eq!(validators.cur_validators.total.to_string(), "14");
         Ok(())
     }

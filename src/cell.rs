@@ -1486,14 +1486,10 @@ impl Cell {
         let mut validator = ValidatorDescr::default();
 
         let _type = parser.load_u8(8)?;
-        if _type == 0x53 {
-            validator._type = "".to_string();
-            validator.public_key = parser.load_sig_pub_key()?;
-            validator.weight = parser.load_u64(64)?;
-        } else {
-            validator._type = "addr".to_string();
-            validator.public_key = parser.load_sig_pub_key()?;
-            validator.weight = parser.load_u64(64)?;
+        validator._type = _type;
+        validator.public_key = parser.load_sig_pub_key()?;
+        validator.weight = parser.load_u64(64)?;
+        if _type != 0x53 {
             validator.adnl_addr = parser.load_bits(256)?;
         }
         Ok(Some(validator))

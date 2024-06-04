@@ -45,7 +45,7 @@ pub struct CurrentValidators {
 
 #[derive(Clone, Debug, Default)]
 pub struct ValidatorDescr {
-    pub _type: String,
+    pub _type: u8,
     pub public_key: Vec<u8>,
     pub weight: u64,
     pub adnl_addr: Vec<u8>,
