@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use bitstream_io::{BigEndian, BitRead, BitReader};
+use log::debug;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::identities::Zero;
 use num_traits::FromPrimitive;
@@ -8,8 +9,6 @@ use num_traits::FromPrimitive;
 use crate::address::TonAddress;
 use crate::cell::util::*;
 use crate::cell::{MapTonCellError, TonCellError};
-
-use super::Cell;
 
 pub struct CellParser<'a> {
     pub(crate) bit_len: usize,
@@ -246,7 +245,7 @@ impl CellParser<'_> {
         }
         let version = self.load_u32(32)?;
         let capabilities = self.load_u64(64)?;
-        println!(
+        debug!(
             "version and capabilities: {:?}, {:?}",
             version, capabilities
         );
@@ -297,13 +296,13 @@ impl CellParser<'_> {
         Ok((len, value))
     }
 
-    pub fn load_sig_pub_key(&mut self) -> Result<(), TonCellError> {
+    pub fn load_sig_pub_key(&mut self) -> Result<Vec<u8>, TonCellError> {
         let magic = self.load_u32(32)?;
         if magic != 0x8e81278a {
             return Err(TonCellError::cell_parser_error("Not a SigPubKey"));
         }
         let pubKey = self.load_bits(256)?;
-        println!("pub key: {:?}", hex::encode(pubKey));
-        Ok(())
+        // println!("pub key: {:?}", hex::encode(pubKey.clone()));
+        Ok(pubKey)
     }
 }

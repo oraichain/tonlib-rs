@@ -3,8 +3,9 @@ use std::io::Cursor;
 use bitstream_io::{BigEndian, BitWrite, BitWriter, ByteRead, ByteReader};
 use crc::Crc;
 use lazy_static::lazy_static;
+use log::debug;
 
-use crate::cell::{Cell, MapTonCellError, TonCellError};
+use crate::cell::{MapTonCellError, TonCellError};
 
 lazy_static! {
     pub static ref CRC_32_ISCSI: Crc<u32> = Crc::<u32>::new(&crc::CRC_32_ISCSI);
@@ -19,6 +20,20 @@ pub enum CellType {
     MerkleUpdateCell = 4,
 }
 
+// Function to convert u8 to CellType
+impl CellType {
+    pub fn from_u8(value: u8) -> Option<CellType> {
+        match value {
+            255 => Some(CellType::OrdinaryCell),
+            1 => Some(CellType::PrunnedBranchCell),
+            2 => Some(CellType::LibraryCell),
+            3 => Some(CellType::MerkleProofCell),
+            4 => Some(CellType::MerkleUpdateCell),
+            _ => None, // Return None if the value doesn't match any variant
+        }
+    }
+}
+
 /// Raw representation of Cell.
 ///
 /// References are stored as indices in BagOfCells.
@@ -27,8 +42,10 @@ pub(crate) struct RawCell {
     pub(crate) data: Vec<u8>,
     pub(crate) bit_len: usize,
     pub(crate) references: Vec<usize>,
-    pub(crate) max_level: u8,
+    pub(crate) max_level: u8, // same as level_mask
     pub(crate) cell_type: u8,
+    pub(crate) is_exotic: bool,
+    pub(crate) has_hashes: bool,
 }
 
 /// Raw representation of BagOfCells.
@@ -48,6 +65,7 @@ impl RawBagOfCells {
     pub(crate) fn parse(serial: &[u8]) -> Result<RawBagOfCells, TonCellError> {
         let cursor = Cursor::new(serial);
 
+        // parse header
         let mut reader: ByteReader<Cursor<&[u8]>, BigEndian> =
             ByteReader::endian(cursor, BigEndian);
         // serialized_boc#b5ee9c72
@@ -94,14 +112,20 @@ impl RawBagOfCells {
                 index.push(read_var_size(&mut reader, off_bytes)?)
             }
         }
+
+        // finish parse header
+
         //   cell_data:(tot_cells_size * [ uint8 ])
         // read_var_size(&mut reader, _tot_cells_size as u8)?;
         let mut cell_vec = Vec::with_capacity(cells);
-        let cur_cursor = reader.bitreader().position_in_bits().unwrap();
+        let cur_cursor = reader
+            .bitreader()
+            .position_in_bits()
+            .map_err(|err| TonCellError::boc_deserialization_error(err.to_string()))?;
         let serial_size = serial.len();
 
         let total_bytes_unread = serial.len() - (cur_cursor / 8) as usize;
-        println!("total bytes unread: {:?}", total_bytes_unread);
+        debug!("total bytes unread: {:?}", total_bytes_unread);
         if total_bytes_unread < _tot_cells_size {
             return Err(TonCellError::boc_deserialization_error(
                 "Not enough bytes for cells data",
@@ -112,13 +136,18 @@ impl RawBagOfCells {
             let cell = read_cell(&mut reader, size_bytes)?;
             cell_vec.push(cell);
         }
+
         //   crc32c:has_crc32c?uint32
         let _crc32c = if has_crc32c {
             reader.read::<u32>().map_boc_deserialization_error()?
         } else {
             0
         };
-        let position = reader.bitreader().position_in_bits().unwrap();
+
+        let position = reader
+            .bitreader()
+            .position_in_bits()
+            .map_err(|err| TonCellError::boc_deserialization_error(err.to_string()))?;
         // TODO: Check crc32
 
         Ok(RawBagOfCells {
@@ -257,6 +286,7 @@ fn read_cell(
         0
     };
     let bit_len = data.len() * 8 - padding_len as usize;
+
     let mut references: Vec<usize> = Vec::new();
     for _ in 0..ref_num {
         references.push(read_var_size(reader, size)?);
@@ -274,6 +304,8 @@ fn read_cell(
         references,
         max_level,
         cell_type,
+        is_exotic,
+        has_hashes,
     };
     Ok(cell)
 }
@@ -367,6 +399,8 @@ mod tests {
             references: vec![],
             max_level: 255,
             cell_type: CellType::OrdinaryCell as u8,
+            is_exotic: false,
+            has_hashes: false,
         };
         let raw_bag = RawBagOfCells {
             cells: vec![raw_cell],

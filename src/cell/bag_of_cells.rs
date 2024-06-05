@@ -55,7 +55,9 @@ impl BagOfCells {
 
     pub fn parse(serial: &[u8]) -> Result<BagOfCells, TonCellError> {
         let raw = RawBagOfCells::parse(serial)?;
+
         let num_cells = raw.cells.len();
+
         let mut cells: Vec<ArcCell> = Vec::new();
         for i in (0..num_cells).rev() {
             let raw_cell = &raw.cells[i];
@@ -64,6 +66,12 @@ impl BagOfCells {
                 bit_len: raw_cell.bit_len,
                 references: Vec::new(),
                 cell_type: raw_cell.cell_type,
+                level_mask: raw_cell.max_level,
+                is_exotic: raw_cell.is_exotic,
+                has_hashes: raw_cell.has_hashes,
+                proof: false,
+                hashes: vec![],
+                depth: vec![],
             };
             for r in &raw_cell.references {
                 if *r <= i {
@@ -73,8 +81,11 @@ impl BagOfCells {
                 }
                 cell.references.push(cells[num_cells - 1 - r].clone());
             }
+
+            cell.finalize()?;
             cells.push(Arc::new(cell));
         }
+
         let roots: Vec<ArcCell> = raw
             .roots
             .iter()
@@ -177,8 +188,10 @@ impl BagOfCells {
                 data: cell.data.clone(),
                 bit_len: cell.bit_len,
                 references: refs,
-                max_level: cell.get_max_level(),
+                max_level: cell.get_level_mask()?,
                 cell_type: cell.cell_type,
+                is_exotic: cell.is_exotic,
+                has_hashes: cell.has_hashes,
             };
             cells.push(raw);
         }
@@ -197,8 +210,11 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
+    use log::debug;
+
     use crate::cell::{BagOfCells, Cell, CellBuilder, TonCellError};
     use crate::message::ZERO_COINS;
+    use crate::responses::ConfigParam;
 
     #[test]
     fn cell_repr_works() -> anyhow::Result<()> {
@@ -404,6 +420,13 @@ mod tests {
 
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(boc).unwrap();
+
+        println!(
+            "Cell Hashes {:?}",
+            hex::encode(cells.roots[0].hashes[0].clone())
+        );
+        println!("Cell Depth {:?}", cells.roots[0].depth);
+
         let first_root = cells.single_root().unwrap();
         let mut parser = first_root.parser();
         let magic = parser.load_u32(32).unwrap();
@@ -427,9 +450,25 @@ mod tests {
             .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
             .unwrap();
 
-        first_root
+        let block_extra = first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
+        let block_extra = block_extra.0.unwrap();
+        let param = block_extra
+            .custom
+            .config
+            .config
+            .get("22")
+            .unwrap()
+            .as_ref()
+            .unwrap();
+
+        match param {
+            ConfigParam::ConfigParams34(validators) => {
+                assert_eq!(validators.validators.total.to_string(), "14");
+            }
+            _ => panic!("Wrong config parameter"),
+        }
         Ok(())
     }
 
@@ -440,6 +479,12 @@ mod tests {
 
         let mut ref_index = &mut 0;
         let cells = BagOfCells::parse_hex(key_block_data_with_block_extra_in_hex).unwrap();
+
+        println!(
+            "Cell Hashes {:?}",
+            hex::encode(cells.roots[0].hashes[0].clone())
+        );
+        println!("Cell Depth {:?}", cells.roots[0].depth);
         let first_root = cells.single_root().unwrap();
         let mut parser = first_root.parser();
         let magic = parser.load_u32(32).unwrap();
@@ -463,9 +508,45 @@ mod tests {
             .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
             .unwrap();
 
-        first_root
+        let block_extra = first_root
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
+
+        let block_extra = block_extra.0.unwrap();
+        let param = block_extra
+            .custom
+            .config
+            .config
+            .get("22")
+            .unwrap()
+            .as_ref()
+            .unwrap();
+
+        let prev_validator_param = block_extra
+            .custom
+            .config
+            .config
+            .get("20")
+            .unwrap()
+            .as_ref()
+            .unwrap();
+
+        let next_validator_param = block_extra.custom.config.config.get("24");
+
+        match param {
+            ConfigParam::ConfigParams34(validators) => {
+                assert_eq!(validators.validators.total.to_string(), "343");
+            }
+            _ => panic!("Wrong config parameter"),
+        }
+
+        match prev_validator_param {
+            ConfigParam::ConfigParams32(validators) => {
+                assert_eq!(validators.validators.total.to_string(), "334");
+            }
+            _ => panic!("Wrong config parameter"),
+        }
+        assert_eq!(next_validator_param.is_none(), true);
         Ok(())
     }
 }

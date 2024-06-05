@@ -145,7 +145,9 @@ impl CellSlice {
             .map_cell_parser_error()?;
         bit_reader.read_bits(bit_len, data.as_mut_slice())?;
         let d1 = data[0];
+        let level_mask = d1 >> 5;
         let is_exotic = (d1 & 8) != 0;
+        let has_hashes = (d1 & 16) != 0;
         let cell_type = if is_exotic {
             data[0]
         } else {
@@ -155,7 +157,13 @@ impl CellSlice {
             data,
             bit_len,
             references: self.cell.references[self.start_ref..self.end_ref].to_vec(),
-            cell_type, // first byte is cell type
+            cell_type, // first byte is cell type,
+            level_mask,
+            is_exotic,
+            has_hashes,
+            proof: false,
+            hashes: vec![],
+            depth: vec![],
         };
         Ok(cell)
     }

@@ -32,3 +32,10 @@ impl<R: io::Read, E: Endianness> BitReadExt for BitReader<R, E> {
         Ok(())
     }
 }
+
+pub fn concat_bytes(a: &Vec<u8>, b: &Vec<u8>) -> Vec<u8> {
+    let mut c = Vec::with_capacity(a.len() + b.len());
+    c.extend_from_slice(a);
+    c.extend_from_slice(b);
+    c
+}

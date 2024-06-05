@@ -10,11 +10,13 @@ use std::sync::Arc;
 pub use bag_of_cells::*;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use bit_reader::BitArrayReader;
 use bit_string::*;
-use bitstream_io::{BigEndian, BitReader, BitWrite, BitWriter};
+use bitstream_io::{BigEndian, BitReader, BitWrite, BitWriter, ByteRead, ByteReader};
 pub use builder::*;
 pub use dict_loader::*;
 pub use error::*;
+use log::debug;
 use num_bigint::BigUint;
 use num_traits::{FromPrimitive, One, ToPrimitive};
 pub use parser::*;
@@ -25,8 +27,13 @@ pub use state_init::*;
 pub use util::*;
 
 use crate::hashmap::Hashmap;
+use crate::responses::{
+    BlockExtra, ConfigParam, ConfigParams, ConfigParamsValidatorSet, McBlockExtra, ValidatorDescr,
+    Validators,
+};
 
 mod bag_of_cells;
+mod bit_reader;
 mod bit_string;
 mod builder;
 mod dict_loader;
@@ -41,12 +48,21 @@ pub type ArcCell = Arc<Cell>;
 
 pub type SnakeFormattedDict = HashMap<[u8; 32], Vec<u8>>;
 
+pub const HASH_BYTES: usize = 32;
+pub const DEPTH_BYTES: usize = 2;
+
 #[derive(PartialEq, Eq, Clone, Hash)]
 pub struct Cell {
     pub data: Vec<u8>,
     pub bit_len: usize,
     pub references: Vec<ArcCell>,
     pub cell_type: u8,
+    pub level_mask: u8,
+    pub is_exotic: bool,
+    pub has_hashes: bool,
+    pub proof: bool,
+    pub hashes: Vec<Vec<u8>>,
+    pub depth: Vec<u16>,
 }
 
 impl Cell {
@@ -89,16 +105,104 @@ impl Cell {
         })
     }
 
-    pub fn get_max_level(&self) -> u8 {
-        //TODO level calculation differ for exotic cells
-        let mut max_level = 0;
-        for k in &self.references {
-            let level = k.get_max_level();
-            if level > max_level {
-                max_level = level;
+    fn get_level_from_mask(mut mask: u8) -> u8 {
+        for i in 0..3 {
+            if mask == 0 {
+                return i;
             }
+            mask = mask >> 1;
         }
-        max_level
+        3
+    }
+
+    fn get_hashes_count_from_mask(mut mask: u8) -> u8 {
+        let mut n = 0;
+        for i in 0..3 {
+            n += mask & 1;
+            mask = mask >> 1;
+        }
+        return n + 1; // 1 repr + up to 3 higher hashes
+    }
+
+    fn get_level(&self) -> u8 {
+        Cell::get_level_from_mask(self.level_mask & 7)
+    }
+
+    fn get_hashes_count(&self) -> u8 {
+        return Cell::get_hashes_count_from_mask(self.level_mask & 7);
+    }
+
+    fn is_level_significant(&self, level: u8) -> bool {
+        level == 0 || (self.level_mask >> (level - 1)) % 2 != 0
+    }
+
+    fn apply_level_mask(&self, level: u8) -> u8 {
+        self.level_mask & ((1 << level) - 1)
+    }
+
+    fn get_level_mask(&self) -> Result<u8, TonCellError> {
+        if self.is_exotic && self.cell_type != CellType::LibraryCell as u8 {
+            // console.log(this.type);
+            if self.cell_type == CellType::PrunnedBranchCell as u8 {
+                return Ok(self.level_mask);
+            }
+            if self.cell_type == CellType::MerkleProofCell as u8 {
+                return Ok(self.reference(0)?.get_level_mask()? >> 1);
+            }
+            if self.cell_type == CellType::MerkleUpdateCell as u8 {
+                return Ok(self.reference(0)?.get_level_mask()?
+                    | self.reference(1)?.get_level_mask()? >> 1);
+            }
+            return Err(TonCellError::cell_parser_error("Unknown special cell type"));
+        } else {
+            let mut level_mask = 0;
+            for i in 0..self.references.len() {
+                let reference = self.reference(i)?;
+                level_mask |= reference.get_level_mask()?;
+            }
+            return Ok(level_mask);
+        }
+    }
+
+    fn get_hash(&self, level: u8) -> Vec<u8> {
+        let mut hash_i = Cell::get_hashes_count_from_mask(self.apply_level_mask(level)) - 1;
+        // console.log("HASH_I:", hash_i);
+        if self.cell_type == CellType::PrunnedBranchCell as u8 {
+            // console.log('Is pruned')
+            let this_hash_i = self.get_hashes_count() - 1;
+            if hash_i != this_hash_i {
+                let bit_reader = BitArrayReader {
+                    array: self.data.clone(),
+                    cursor: 0,
+                };
+                return bit_reader.get_range(16 + (hash_i as usize) * HASH_BYTES * 8, 256);
+            }
+            hash_i = 0;
+        }
+        return self.hashes[hash_i as usize].clone();
+    }
+
+    fn get_depth(&self, level: Option<u8>) -> u64 {
+        let mut hash_i = Cell::get_hashes_count_from_mask(Cell::apply_level_mask(
+            &self,
+            level.unwrap_or_default(),
+        )) - 1;
+
+        if self.cell_type == CellType::PrunnedBranchCell as u8 {
+            let this_hash_i = self.get_hashes_count() - 1;
+            if hash_i != this_hash_i {
+                let bit_reader = BitArrayReader {
+                    array: self.data.clone(),
+                    cursor: self.bit_len,
+                };
+                return bit_reader.read_uint16(
+                    16 + this_hash_i as usize * HASH_BYTES * 8 + hash_i as usize * DEPTH_BYTES * 8,
+                ) as u64;
+            }
+            hash_i = 0;
+        }
+
+        return self.depth[hash_i as usize] as u64;
     }
 
     fn get_max_depth(&self) -> usize {
@@ -115,8 +219,21 @@ impl Cell {
         max_depth
     }
 
-    fn get_refs_descriptor(&self) -> u8 {
-        self.references.len() as u8 + self.get_max_level() * 32
+    fn get_refs_descriptor(&self, _level_mask: Option<u8>) -> Result<[u8; 1], TonCellError> {
+        let mut level_mask = 0u8;
+        if !self.proof {
+            level_mask = if let Some(level_mask) = _level_mask {
+                level_mask
+            } else {
+                self.get_level_mask()?
+            };
+        }
+        let mut d1: [u8; 1] = [0];
+        //d1[0] = this.refs.length + this.isExotic * 8 + this.hasHashes * 16 + levelMask * 32;
+        // ton node variant used
+        let is_exotic_val = if self.is_exotic { 1 } else { 0 };
+        d1[0] = (self.references.len() + is_exotic_val * 8 + (level_mask as usize) * 32) as u8;
+        Ok(d1)
     }
 
     fn get_bits_descriptor(&self) -> u8 {
@@ -125,13 +242,22 @@ impl Cell {
         self.data.len() as u8 * 2 - if full_bytes { 0 } else { 1 } //subtract 1 if the last byte is not full
     }
 
+    fn depth_to_array(&self, depth: usize) -> [u8; 2] {
+        let mut d = [0; 2];
+        d[1] = (depth % 256) as u8;
+        d[0] = (depth / 256) as u8;
+        d
+    }
+
     pub fn get_repr(&self) -> Result<Vec<u8>, TonCellError> {
         let data_len = self.data.len();
         let rest_bits = self.bit_len % 8;
         let full_bytes = rest_bits == 0;
         let mut writer = BitWriter::endian(Vec::new(), BigEndian);
-        let val = self.get_refs_descriptor();
-        writer.write(8, val).map_boc_serialization_error()?;
+        let val = self.get_refs_descriptor(None)?;
+        writer
+            .write(8, val[0] as u32)
+            .map_boc_serialization_error()?;
         writer
             .write(8, self.get_bits_descriptor())
             .map_boc_serialization_error()?;
@@ -166,6 +292,246 @@ impl Cell {
             .ok_or_else(|| TonCellError::cell_builder_error("Stream is not byte-aligned"))
             .map(|b| b.to_vec());
         result
+    }
+
+    pub fn finalize(&mut self) -> Result<(), TonCellError> {
+        let bit_reader = BitArrayReader {
+            array: self.data.clone(),
+            cursor: self.bit_len,
+        };
+
+        let mut _type = CellType::OrdinaryCell as u8;
+        if self.is_exotic {
+            if self.bit_len < 8 {
+                return Err(TonCellError::boc_deserialization_error(
+                    "Not enough data for a special cell",
+                ));
+            }
+
+            _type = bit_reader.read_uint8(0);
+            if _type == CellType::OrdinaryCell as u8 {
+                return Err(TonCellError::boc_deserialization_error(
+                    "Special cell has Ordinary type",
+                ));
+            }
+        }
+        self.cell_type = _type;
+        // println!("Cell Type {:?}", _type);
+
+        match CellType::from_u8(_type).unwrap() {
+            CellType::OrdinaryCell => {
+                if self.proof != true {
+                    for k in &self.references {
+                        self.level_mask |= k.level_mask;
+                    }
+                }
+            }
+            CellType::PrunnedBranchCell => {
+                if self.references.len() != 0 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "PrunnedBranch special cell has a cell reference",
+                    ));
+                }
+                if self.data.len() < 16 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enough data for a PrunnedBranch special cell",
+                    ));
+                }
+                self.level_mask = bit_reader.read_uint8(8);
+                let level = self.get_level();
+                if level > 3 || level == 0 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Prunned Branch has an invalid level",
+                    ));
+                }
+                let new_level_mask = self.apply_level_mask(level - 1);
+                let hashes = Cell::get_hashes_count_from_mask(new_level_mask);
+
+                if self.data.len() * 8 < (2 + hashes as usize * (HASH_BYTES + DEPTH_BYTES)) * 8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enouch data for a PrunnedBranch special cell",
+                    ));
+                }
+            }
+            CellType::LibraryCell => {
+                if self.data.len() * 8 < 8 + HASH_BYTES * 8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enouch data for a Library special cell",
+                    ));
+                }
+            }
+            CellType::MerkleProofCell => {
+                if self.data.len() * 8 != 8 + (HASH_BYTES + DEPTH_BYTES) * 8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enouch data for a MerkleProof special cell",
+                    ));
+                }
+                if self.references.len() != 1 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Wrong references count for a MerkleProof special cell",
+                    ));
+                }
+                let merkle_hash = bit_reader.get_range(8, HASH_BYTES * 8);
+                let child_hash = self.references[0].get_hash(0);
+
+                if !merkle_hash.eq(&child_hash) {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Hash mismatch in a MerkleProof special cell",
+                    ));
+                }
+                if bit_reader.read_uint16(8 + HASH_BYTES * 8)
+                    != self.references[0].get_depth(Some(0)) as u16
+                {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Depth mismatch in a MerkleProof special cell",
+                    ));
+                }
+                self.level_mask = self.references[0].level_mask >> 1;
+            }
+            CellType::MerkleUpdateCell => {
+                if self.data.len() * 8 != 8 + (HASH_BYTES + DEPTH_BYTES) * 8 * 2 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Not enouch data for a MerkleUpdate special cell",
+                    ));
+                }
+                if self.references.len() != 2 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Wrong references count for a MerkleUpdate special cell",
+                    ));
+                }
+                let merkle_hash_0 = bit_reader.get_range(8, HASH_BYTES * 8);
+                let child_hash_0 = self.references[0].get_hash(0);
+                if !merkle_hash_0.eq(&child_hash_0) {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "First hash mismatch in a MerkleUpdate special cell",
+                    ));
+                }
+
+                if bit_reader.read_uint16(8 + 16 * HASH_BYTES)
+                    != self.references[0].get_depth(Some(0)) as u16
+                {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "First depth mismatch in a MerkleUpdate special cell",
+                    ));
+                }
+                if bit_reader.read_uint16(8 + 16 * HASH_BYTES + DEPTH_BYTES * 8)
+                    != self.references[1].get_depth(Some(0)) as u16
+                {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Second depth mismatch in a MerkleUpdate special cell",
+                    ));
+                }
+                self.level_mask =
+                    (self.references[0].level_mask | self.references[1].level_mask) >> 1;
+            }
+
+            _ => {
+                return Err(TonCellError::boc_deserialization_error(
+                    "Unknown special cell type",
+                ));
+            }
+        }
+
+        let total_hash_count = self.get_hashes_count();
+        let hash_count = if _type == CellType::PrunnedBranchCell as u8 {
+            1
+        } else {
+            total_hash_count
+        };
+        let hash_i_offset = total_hash_count - hash_count;
+
+        self.hashes = vec![vec![]; hash_count as usize];
+        self.depth = vec![0; hash_count as usize];
+
+        let mut hash_i = 0;
+        let level = self.get_level();
+
+        for level_i in 0..=level {
+            if !self.is_level_significant(level_i) {
+                continue;
+            }
+
+            if hash_i < hash_i_offset {
+                hash_i += 1;
+                continue;
+            }
+
+            let mut repr: Vec<u8> = vec![];
+
+            let new_level_mask = self.apply_level_mask(level_i);
+
+            let d1 = self.get_refs_descriptor(Some(new_level_mask))?;
+            let d2 = self.get_bits_descriptor();
+
+            repr = concat_bytes(&repr, &d1.to_vec());
+            repr = concat_bytes(&repr, &vec![d2]);
+
+            if hash_i == hash_i_offset {
+                if level_i != 0 && self.cell_type != CellType::PrunnedBranchCell as u8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Cannot deserialize cell",
+                    ));
+                }
+
+                repr = concat_bytes(&repr, &bit_reader.get_top_upped_array()?);
+            } else {
+                //debug_log("add to hash own " + (hash_i - hash_i_offset - 1) + " hash", bytesToHex(this.hashes[hash_i - hash_i_offset - 1]));
+
+                if level_i == 0 || self.cell_type == CellType::PrunnedBranchCell as u8 {
+                    return Err(TonCellError::boc_deserialization_error(
+                        "Cannot deserialize cell",
+                    ));
+                }
+
+                repr = concat_bytes(&repr, &self.hashes[(hash_i - hash_i_offset - 1) as usize]);
+            }
+
+            let dest_i = hash_i - hash_i_offset;
+
+            let mut depth = 0;
+            for i in &self.references {
+                let mut child_depth = 0;
+                if self.cell_type == CellType::MerkleProofCell as u8
+                    || self.cell_type == CellType::MerkleUpdateCell as u8
+                {
+                    child_depth = i.get_depth(Some(level_i + 1));
+                } else {
+                    child_depth = i.get_depth(Some(level_i));
+                }
+                repr = concat_bytes(&repr, &i.depth_to_array(child_depth as usize).to_vec());
+                depth = std::cmp::max(depth, child_depth);
+            }
+
+            if self.references.len() != 0 {
+                if depth >= 1024 {
+                    return Err(TonCellError::boc_deserialization_error("Depth is too big"));
+                }
+
+                depth += 1;
+            }
+            self.depth[dest_i as usize] = depth as u16;
+
+            // children hash
+            for i in 0..self.references.len() {
+                if self.cell_type == CellType::MerkleProofCell as u8
+                    || self.cell_type == CellType::MerkleUpdateCell as u8
+                {
+                    repr = concat_bytes(&repr, &self.references[i].get_hash(level_i + 1));
+                } else {
+                    repr = concat_bytes(&repr, &self.references[i].get_hash(level_i));
+                }
+            }
+
+            let mut hasher: Sha256 = Sha256::new();
+            hasher.update(repr);
+
+            self.hashes[dest_i as usize] = hasher.finalize()[..].to_vec();
+
+            hash_i += 1;
+        }
+        // println!("hashes {:?}", self.hashes);
+        // println!("depth {:?}", self.depth);
+        Ok(())
     }
 
     pub fn cell_hash(&self) -> Result<Vec<u8>, TonCellError> {
@@ -390,7 +756,7 @@ impl Cell {
         let reference = self.reference(ref_index.to_owned())?;
         *ref_index += 1;
         let mut new_parser = reference.parser();
-        println!(
+        debug!(
             "reference cell type, ref index and ref data: {:?}, {:?}, {:?}",
             reference.cell_type, ref_index, reference.data
         );
@@ -462,9 +828,9 @@ impl Cell {
         let gen_catchain_seqno = parser.load_u32(32)?;
         let min_ref_mc_seqno = parser.load_u32(32)?;
         let prev_key_block_seqno = parser.load_u32(32)?;
-        println!("prev key block seq no: {:?}", prev_key_block_seqno);
-        println!("flag & 1: {:?}", flags & 1);
-        println!("not master: {:?}", not_master);
+        debug!("prev key block seq no: {:?}", prev_key_block_seqno);
+        debug!("flag & 1: {:?}", flags & 1);
+        debug!("not master: {:?}", not_master);
 
         if flags & 1 > 0 {
             parser.load_global_version()?;
@@ -504,9 +870,9 @@ impl Cell {
         let seq_no = parser.load_u32(32)?;
         let root_hash = parser.load_bits(256)?;
         let file_hash = parser.load_bits(256)?;
-        println!("end_lt and seq_no: {:?}, {:?}", end_lt, seq_no);
-        println!("root hash: {:?}", root_hash);
-        println!("file hash: {:?}", file_hash);
+        debug!("end_lt and seq_no: {:?}, {:?}", end_lt, seq_no);
+        debug!("root hash: {:?}", root_hash);
+        debug!("file hash: {:?}", file_hash);
         // FIXME: return ext blk ref
         Ok(())
     }
@@ -547,11 +913,11 @@ impl Cell {
         if parser.load_u8(8)? != 0x04 {
             return Err(TonCellError::cell_parser_error("not a Merkle Update"));
         }
-        println!("current ref index: {:?}", ref_index);
+        debug!("current ref index: {:?}", ref_index);
         let old_hash = parser.load_bits(256)?;
         let new_hash = parser.load_bits(256)?;
-        println!("old hash: {:?}", old_hash);
-        println!("new hash: {:?}", new_hash);
+        debug!("old hash: {:?}", old_hash);
+        debug!("new hash: {:?}", new_hash);
         let old = cell.reference(*ref_index)?;
         *ref_index += 1;
         let new = cell.reference(*ref_index)?;
@@ -563,25 +929,34 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<BlockExtra, TonCellError> {
         if parser.load_u32(32)? != 0x4a33f6fd {
             return Err(TonCellError::cell_parser_error("not a BlockExtra"));
         }
+
+        // debug!("Cell hash: {:?}", cell.());
+
+        let mut block_extra = BlockExtra::default();
+
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_in_msg_descr))?;
         cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_out_msg_descr))?;
-        // TODO: load shard block is currently wrong. Don't trust
         cell.load_ref_if_exist(ref_index, Some(Cell::load_shard_account_blocks))?;
         let rand_seed = parser.load_bits(256)?;
         let created_by = parser.load_bits(256)?;
-        println!("rand seed: {:?}", rand_seed);
-        println!("created by: {:?}", created_by);
-        cell.load_maybe_ref(
+        debug!("rand seed: {:?}", rand_seed);
+        debug!("created by: {:?}", created_by);
+
+        let res = cell.load_maybe_ref(
             ref_index,
             parser,
             Some(Cell::load_mc_block_extra),
-            None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<(), TonCellError>>,
+            None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<McBlockExtra, TonCellError>>,
         )?;
-        Ok(())
+
+        if let Some(custom) = res.0 {
+            block_extra.custom = custom;
+        }
+        Ok(block_extra)
     }
 
     pub fn load_in_msg_descr(parser: &mut CellParser) -> Result<(), TonCellError> {
@@ -662,7 +1037,7 @@ impl Cell {
         };
         let mut hashmap = Hashmap::new(n, hash_map_fn);
         hashmap.deserialize_e(cell, ref_index, parser)?;
-        println!("data map: {:?}", hashmap.map);
+        debug!("data map: {:?}", hashmap.map);
         Ok(hashmap.map)
     }
 
@@ -702,8 +1077,8 @@ impl Cell {
         Cell::load_account(cell, ref_index, parser)?;
         let last_trans_hash = parser.load_bits(256)?;
         let last_trans_lt = parser.load_u64(64)?;
-        println!("last trans hash: {:?}", last_trans_hash);
-        println!("last trans lt: {:?}", last_trans_lt);
+        debug!("last trans hash: {:?}", last_trans_hash);
+        debug!("last trans lt: {:?}", last_trans_lt);
         Ok(())
     }
 
@@ -717,7 +1092,7 @@ impl Cell {
             return Err(TonCellError::cell_parser_error("not an AccountBlock"));
         }
         let account_addr = parser.load_bits(256)?;
-        println!("account addr load account block: {:?}", account_addr);
+        debug!("account addr load account block: {:?}", account_addr);
         Cell::load_hash_map_aug(
             cell,
             ref_index,
@@ -740,7 +1115,7 @@ impl Cell {
         parser: &mut CellParser,
     ) -> Result<(), TonCellError> {
         let split_depth = parser.load_uint_le(30)?;
-        println!("split depth: {:?}", split_depth);
+        debug!("split depth: {:?}", split_depth);
         Cell::load_currency_collection(cell, ref_index, parser)?;
         Ok(())
     }
@@ -786,7 +1161,7 @@ impl Cell {
             32,
             |cell: &Cell, ref_index: &mut usize, parser: &mut CellParser, _key: &BigUint| {
                 let result = parser.load_var_uinteger(32)?;
-                println!("load extra currency collection: {:?}", result);
+                debug!("load extra currency collection: {:?}", result);
                 Ok(Some(result))
             },
         )?;
@@ -814,8 +1189,8 @@ impl Cell {
         }
         let old_hash = parser.load_bits(256)?;
         let new_hash = parser.load_bits(256)?;
-        println!("old hash load hash update: {:?}", old_hash);
-        println!("new hash load hash update: {:?}", new_hash);
+        debug!("old hash load hash update: {:?}", old_hash);
+        debug!("new hash load hash update: {:?}", new_hash);
         Ok(())
     }
 
@@ -823,7 +1198,9 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<McBlockExtra, TonCellError> {
+        let mut mc_block_extra = McBlockExtra::default();
+
         let magic = parser.load_u16(16)?;
         if magic != 0xcca5 {
             return Err(TonCellError::cell_parser_error("not a McBlockExtra"));
@@ -837,12 +1214,11 @@ impl Cell {
         let new_ref_index = &mut 0usize;
         // use a new parser to reset cell cursor, since we are handling a new cell.
         let cell_r1_parser = &mut cell_r1.parser();
-        println!("current cell data: {:?}", cell.data);
-        println!("ref index after all: {:?}", ref_index);
-        println!("cell r1 type: {:?}", cell_r1.cell_type);
-        println!("cell r1: {:?}", cell_r1.data);
+        debug!("current cell data: {:?}", cell.data);
+        debug!("ref index after all: {:?}", ref_index);
+        debug!("cell r1 type: {:?}", cell_r1.cell_type);
+        debug!("cell r1: {:?}", cell_r1.data);
         if cell_r1.cell_type == CellType::OrdinaryCell as u8 {
-            // TODO: impl
             // prev_blk_signatures
             Cell::load_hash_map_e(
                 &cell_r1,
@@ -870,9 +1246,9 @@ impl Cell {
             )?;
         }
         if key_block {
-            Cell::load_config_params(cell, ref_index, parser)?;
+            mc_block_extra.config = Cell::load_config_params(cell, ref_index, parser)?;
         }
-        Ok(())
+        Ok(mc_block_extra)
     }
 
     pub fn load_shard_hashes(
@@ -895,7 +1271,6 @@ impl Cell {
                         |ref_ref_cell: &Cell,
                          inner_inner_ref_index: &mut usize,
                          parser: &mut CellParser| {
-                            // TODO: parse load_shard_descr as well
                             Cell::load_bin_tree(ref_ref_cell, inner_inner_ref_index, parser)
                         },
                     ),
@@ -949,7 +1324,7 @@ impl Cell {
         _key: &BigUint,
     ) -> Result<Option<()>, TonCellError> {
         let node_id_short = parser.load_bits(256)?;
-        println!("node id short: {:?}", node_id_short);
+        debug!("node id short: {:?}", node_id_short);
         Cell::load_crypto_signature(cell, ref_index, parser)?;
         // We can safely ignore this since it is called in load_ref_if_exist
         Ok(Some(()))
@@ -983,14 +1358,16 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<ConfigParams, TonCellError> {
+        let mut config_params = ConfigParams::default();
+
         let config_addr = parser.load_bits(256)?;
-        println!("config addr: {:?}", config_addr);
-        cell.load_ref_if_exist(
+        debug!("config addr: {:?}", config_addr);
+        let res = cell.load_ref_if_exist(
             ref_index,
             Some(
                 |inner_cell: &Cell, inner_ref_index: &mut usize, inner_parser: &mut CellParser| {
-                    Cell::load_hash_map(
+                    let res = Cell::load_hash_map(
                         inner_cell,
                         inner_ref_index,
                         inner_parser,
@@ -999,7 +1376,7 @@ impl Cell {
                          hashmap_ref_index: &mut usize,
                          _hashmap_parser: &mut CellParser,
                          n: &BigUint| {
-                            hashmap_cell.load_ref_if_exist(
+                            let res = hashmap_cell.load_ref_if_exist(
                                 hashmap_ref_index,
                                 Some(|inner_inner_cell: &Cell,
                                  inner_inner_ref_index: &mut usize,
@@ -1007,14 +1384,20 @@ impl Cell {
                                     Cell::load_config_param(inner_inner_cell, inner_inner_ref_index, inner_inner_parser, n)
                                 }),
                             )?;
-                            Ok(Some(()))
+                            Ok(res.0)
                         },
                     )?;
-                    Ok(())
+                    Ok(res)
                 },
             ),
         )?;
-        Ok(())
+
+        if let Some(config) = res.0 {
+            config_params.config = config;
+        } else {
+            return Err(TonCellError::cell_parser_error("No config params to load"));
+        }
+        Ok(config_params)
     }
 
     pub fn load_config_param(
@@ -1022,20 +1405,45 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<Option<ConfigParam>, TonCellError> {
         if parser.remaining_bits() < parser.bit_len || *ref_index != 0 {
             return Err(TonCellError::cell_parser_error("Invalid config cell"));
         }
-        println!("config param number: {:?}", n.to_string());
-        // TODO: impl deserializing validator set
+        debug!("config param number: {:?}", n.to_string());
         // we dont need to implement all config params because each param is a cell ref -> they are independent.
         let n_str = n.to_string();
 
         // validator set
-        if n_str == "34" {
-            return Cell::load_config_param_34(cell, ref_index, parser, n);
+        if n_str == "32" {
+            return Ok(Some(ConfigParam::ConfigParams34(
+                Cell::load_config_param_32(cell, ref_index, parser, n)?,
+            )));
         }
-        Ok(())
+        if n_str == "34" {
+            return Ok(Some(ConfigParam::ConfigParams34(
+                Cell::load_config_param_34(cell, ref_index, parser, n)?,
+            )));
+        }
+        if n_str == "36" {
+            return Ok(Some(ConfigParam::ConfigParams36(
+                Cell::load_config_param_36(cell, ref_index, parser, n)?,
+            )));
+        }
+        Ok(None)
+    }
+
+    pub fn load_config_param_32(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: &BigUint,
+    ) -> Result<ConfigParamsValidatorSet, TonCellError> {
+        let mut config_param = ConfigParamsValidatorSet::default();
+        config_param.number = 32;
+
+        let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
+        config_param.validators = validators;
+        Ok(config_param)
     }
 
     pub fn load_config_param_34(
@@ -1043,9 +1451,27 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<ConfigParamsValidatorSet, TonCellError> {
+        let mut config_params_34 = ConfigParamsValidatorSet::default();
+        config_params_34.number = 34;
+
         let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
-        Ok(())
+        config_params_34.validators = validators;
+        Ok(config_params_34)
+    }
+
+    pub fn load_config_param_36(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        n: &BigUint,
+    ) -> Result<ConfigParamsValidatorSet, TonCellError> {
+        let mut config_param = ConfigParamsValidatorSet::default();
+        config_param.number = 36;
+
+        let validators = Cell::load_validator_set(cell, ref_index, parser, n)?;
+        config_param.validators = validators;
+        Ok(config_param)
     }
 
     pub fn load_validator_set(
@@ -1053,37 +1479,41 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<Validators, TonCellError> {
+        let mut curr_vals = Validators::default();
+
         let _type = parser.load_u8(8)?;
         if _type == 0x11 {
-            let validator_type = "";
-            let utime_since = parser.load_u32(32)?;
-            let utime_until = parser.load_u32(32)?;
-            let total = parser.load_uint(16)?;
-            let main = parser.load_uint(16)?;
-            if total < main {
+            curr_vals._type = "".to_string();
+            curr_vals.utime_since = parser.load_u32(32)?;
+            curr_vals.utime_until = parser.load_u32(32)?;
+            curr_vals.total = parser.load_uint(16)?;
+            curr_vals.main = parser.load_uint(16)?;
+            if curr_vals.total < curr_vals.main {
                 return Err(TonCellError::cell_parser_error("data.total < data.main"));
             }
-            if main < BigUint::from_u8(1).unwrap() {
+            if curr_vals.main < BigUint::from_u8(1).unwrap() {
                 return Err(TonCellError::cell_parser_error("data.main < 1"));
             }
-            Cell::load_hash_map(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
+            curr_vals.list =
+                Cell::load_hash_map(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
         } else if _type == 0x12 {
-            let validator_type = "ext";
-            let utime_since = parser.load_u32(32)?;
-            let utime_until = parser.load_u32(32)?;
-            let total = parser.load_uint(16)?;
-            let main = parser.load_uint(16)?;
-            if total < main {
+            curr_vals._type = "ext".to_string();
+            curr_vals.utime_since = parser.load_u32(32)?;
+            curr_vals.utime_until = parser.load_u32(32)?;
+            curr_vals.total = parser.load_uint(16)?;
+            curr_vals.main = parser.load_uint(16)?;
+            if curr_vals.total < curr_vals.main {
                 return Err(TonCellError::cell_parser_error("data.total < data.main"));
             }
-            if main < BigUint::from_u8(1).unwrap() {
+            if curr_vals.main < BigUint::from_u8(1).unwrap() {
                 return Err(TonCellError::cell_parser_error("data.main < 1"));
             }
-            let total_weight = parser.load_u64(64)?;
-            Cell::load_hash_map_e(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
+            curr_vals.total_weight = parser.load_u64(64)?;
+            curr_vals.list =
+                Cell::load_hash_map_e(cell, ref_index, parser, 16, Cell::load_validator_descr)?;
         }
-        Ok(())
+        Ok(curr_vals)
     }
 
     pub fn load_validator_descr(
@@ -1091,32 +1521,38 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
         n: &BigUint,
-    ) -> Result<Option<()>, TonCellError> {
+    ) -> Result<Option<ValidatorDescr>, TonCellError> {
+        let mut validator = ValidatorDescr::default();
+
         let _type = parser.load_u8(8)?;
-        if _type == 0x53 {
-            let data_type = "";
-            let public_key = parser.load_sig_pub_key()?;
-            let weight = parser.load_u64(64)?;
-        } else {
-            let data_type = "addr";
-            let public_key = parser.load_sig_pub_key()?;
-            let weight = parser.load_u64(64)?;
-            let adnl_addr = parser.load_bits(256)?;
+        validator._type = _type;
+        validator.public_key = parser.load_sig_pub_key()?;
+        validator.weight = parser.load_u64(64)?;
+        if _type != 0x53 {
+            validator.adnl_addr = parser.load_bits(256)?;
         }
-        Ok(Some(()))
+        Ok(Some(validator))
     }
 }
 
 impl Debug for Cell {
+    // pub proof: bool,
+    // pub hashes: Vec<Vec<u8>>,
+    // pub depth: Vec<u16>,
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "Cell{{ data: [{}], bit_len: {}, references: [\n",
+            "Cell{{ data: [{}], cell_type: {}, level_mask: {}, is_exotic: {}, has_hashes: {}, ,proof: {}, bit_len: {}, references: [\n",
             self.data
                 .iter()
                 .map(|&byte| format!("{:02X}", byte))
                 .collect::<Vec<_>>()
                 .join(""),
+            self.cell_type,
+            self.level_mask,
+            self.is_exotic,
+            self.has_hashes,
+            self.proof,
             self.bit_len,
         )?;
 
@@ -1126,6 +1562,14 @@ impl Debug for Cell {
                 "    {}\n",
                 format!("{:?}", reference).replace('\n', "\n    ")
             )?;
+        }
+        write!(f, "], hashes:[ ")?;
+        for hash_vec in &self.hashes {
+            writeln!(f, "[{:?}]", hash_vec)?;
+        }
+        write!(f, "], depth:[ ")?;
+        for depth in &self.depth {
+            writeln!(f, "[{:?}]", depth)?;
         }
 
         write!(f, "] }}")

@@ -275,7 +275,9 @@ impl CellBuilder {
                 )));
             }
             let d1 = vec[0];
+            let level_mask = d1 >> 5;
             let is_exotic = (d1 & 8) != 0;
+            let has_hashes = (d1 & 16) != 0;
             let cell_type = if is_exotic {
                 vec[0]
             } else {
@@ -286,6 +288,12 @@ impl CellBuilder {
                 bit_len,
                 references: self.references.clone(),
                 cell_type,
+                is_exotic,
+                level_mask,
+                has_hashes,
+                proof: false,
+                hashes: vec![],
+                depth: vec![],
             })
         } else {
             Err(TonCellError::CellBuilderError(
