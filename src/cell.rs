@@ -1415,7 +1415,7 @@ impl Cell {
 
         // validator set
         if n_str == "32" {
-            return Ok(Some(ConfigParam::ConfigParams34(
+            return Ok(Some(ConfigParam::ConfigParams32(
                 Cell::load_config_param_32(cell, ref_index, parser, n)?,
             )));
         }

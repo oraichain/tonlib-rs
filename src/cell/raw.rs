@@ -58,6 +58,7 @@ pub(crate) struct RawBagOfCells {
 }
 
 const GENERIC_BOC_MAGIC: u32 = 0xb5ee9c72;
+const PROOF_BOC_MAGIC: u32 = 0x62356565;
 const _INDEXED_BOC_MAGIC: u32 = 0x68ff65f3;
 const _INDEXED_CRC32_MAGIC: u32 = 0xacc3a728;
 
