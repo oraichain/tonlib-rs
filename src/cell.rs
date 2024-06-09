@@ -28,8 +28,8 @@ pub use util::*;
 
 use crate::hashmap::Hashmap;
 use crate::responses::{
-    BlockExtra, ConfigParam, ConfigParams, ConfigParamsValidatorSet, McBlockExtra, ValidatorDescr,
-    Validators,
+    BlkPrevRef, BlockExtra, BlockInfo, ConfigParam, ConfigParams, ConfigParamsValidatorSet,
+    ExtBlkRef, McBlockExtra, ShardDescr, ValidatorDescr, Validators,
 };
 
 mod bag_of_cells;
@@ -795,7 +795,8 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<BlockInfo, TonCellError> {
+        let mut block_info = BlockInfo::default();
         if parser.load_u32(32)? != 0x9bc7a987 {
             return Err(TonCellError::cell_parser_error("Not a BlockInfo"));
         }
@@ -839,7 +840,7 @@ impl Cell {
             cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_blk_master_info))?;
         }
 
-        cell.load_ref_if_exist(
+        let result = cell.load_ref_if_exist(
             ref_index,
             Some(
                 |c: &Cell, inner_ref_index: &mut usize, p: &mut CellParser| {
@@ -847,6 +848,7 @@ impl Cell {
                 },
             ),
         )?;
+        block_info.prev_ref = result.0.unwrap_or_default();
 
         if vert_seqno_incr {
             cell.load_ref_if_exist(
@@ -858,38 +860,49 @@ impl Cell {
                 ),
             )?;
         }
-        Ok(())
+        Ok(block_info)
     }
 
-    pub fn load_blk_master_info(parser: &mut CellParser) -> Result<(), TonCellError> {
+    pub fn load_blk_master_info(parser: &mut CellParser) -> Result<ExtBlkRef, TonCellError> {
         Cell::load_ext_blk_ref(parser)
     }
 
-    pub fn load_ext_blk_ref(parser: &mut CellParser) -> Result<(), TonCellError> {
+    pub fn load_ext_blk_ref(parser: &mut CellParser) -> Result<ExtBlkRef, TonCellError> {
         let end_lt = parser.load_u64(64)?;
-        let seq_no = parser.load_u32(32)?;
+        let seqno = parser.load_u32(32)?;
         let root_hash = parser.load_bits(256)?;
         let file_hash = parser.load_bits(256)?;
-        debug!("end_lt and seq_no: {:?}, {:?}", end_lt, seq_no);
-        debug!("root hash: {:?}", root_hash);
+        debug!("end_lt and seq_no: {:?}, {:?}", end_lt, seqno);
+        debug!("root hash: {:?}", hex::encode(root_hash.clone()));
         debug!("file hash: {:?}", file_hash);
-        // FIXME: return ext blk ref
-        Ok(())
+        Ok(ExtBlkRef {
+            end_lt,
+            seqno,
+            root_hash,
+            file_hash,
+        })
     }
 
     pub fn load_blk_prev_info(
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-        after_merge: bool,
-    ) -> Result<(), TonCellError> {
-        if !after_merge {
-            Cell::load_ext_blk_ref(parser)?;
-        } else {
-            cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_ext_blk_ref))?;
-            cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_ext_blk_ref))?;
+        n: bool,
+    ) -> Result<BlkPrevRef, TonCellError> {
+        if !n {
+            return Ok(BlkPrevRef {
+                first_prev: Some(Cell::load_ext_blk_ref(parser)?),
+                second_prev: None,
+            });
         }
-        Ok(())
+        let first_prev_result =
+            cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_ext_blk_ref))?;
+        let second_prev_result =
+            cell.load_ref_if_exist_without_self(ref_index, Some(Cell::load_ext_blk_ref))?;
+        Ok(BlkPrevRef {
+            first_prev: first_prev_result.0,
+            second_prev: second_prev_result.0,
+        })
     }
 
     pub fn load_value_flow(
@@ -943,8 +956,6 @@ impl Cell {
         cell.load_ref_if_exist(ref_index, Some(Cell::load_shard_account_blocks))?;
         let rand_seed = parser.load_bits(256)?;
         let created_by = parser.load_bits(256)?;
-        debug!("rand seed: {:?}", rand_seed);
-        debug!("created by: {:?}", created_by);
 
         let res = cell.load_maybe_ref(
             ref_index,
@@ -1206,7 +1217,8 @@ impl Cell {
             return Err(TonCellError::cell_parser_error("not a McBlockExtra"));
         }
         let key_block = parser.load_bit()?;
-        Cell::load_shard_hashes(cell, ref_index, parser)?;
+        mc_block_extra.shards = Cell::load_shard_hashes(cell, ref_index, parser)?;
+
         Cell::load_shard_fees(cell, ref_index, parser)?;
 
         let cell_r1 = cell.reference(ref_index.to_owned())?;
@@ -1255,7 +1267,7 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<Vec<ShardDescr>, TonCellError> {
         let hashmap = Cell::load_hash_map_e(
             cell,
             ref_index,
@@ -1278,7 +1290,8 @@ impl Cell {
                 Ok(result.0)
             },
         )?;
-        Ok(())
+        // FIXME: actually impl and return a list of shards
+        Ok(vec![])
     }
 
     pub fn load_bin_tree(
