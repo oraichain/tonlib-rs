@@ -1395,11 +1395,11 @@ impl Cell {
         }
 
         let mut shard_descr = ShardDescr::default();
-        shard_descr.seqno = parser.load_u64(32)?;
+        shard_descr.seqno = parser.load_u32(32)?;
         // println!("Shard {}", shard_descr.seqno);
         shard_descr.reg_mc_seqno = parser.load_u32(32)?;
-        shard_descr.start_lt = parser.load_uint(64)?;
-        shard_descr.end_lt = parser.load_uint(64)?;
+        shard_descr.start_lt = parser.load_u64(64)?;
+        shard_descr.end_lt = parser.load_u64(64)?;
         shard_descr.root_hash = parser.load_bits(256)?;
         shard_descr.file_hash = parser.load_bits(256)?;
         parser.load_bit()?; // before_split
@@ -1414,7 +1414,7 @@ impl Cell {
             ));
         }
         parser.load_uint(32)?; //next_catchain_seqno
-        shard_descr.next_validator_shard = parser.load_uint(64)?;
+        shard_descr.next_validator_shard = parser.load_u64(64)?;
         parser.load_uint(32)?; //min_ref_mc_seqno
         shard_descr.gen_utime = parser.load_u64(32)?;
         // TODO: load split_merge_at, fees_collected, funds_created

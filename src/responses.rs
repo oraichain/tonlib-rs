@@ -34,14 +34,14 @@ pub struct McBlockExtra {
 
 #[derive(Clone, Debug, Default)]
 pub struct ShardDescr {
-    pub seqno: u64,
+    pub seqno: u32,
     pub reg_mc_seqno: u32,
-    pub start_lt: BigUint,
-    pub end_lt: BigUint,
+    pub start_lt: u64,
+    pub end_lt: u64,
     pub root_hash: Vec<u8>,
     pub file_hash: Vec<u8>,
     pub gen_utime: u64,
-    pub next_validator_shard: BigUint,
+    pub next_validator_shard: u64,
 }
 
 #[derive(Clone, Debug, Default)]
