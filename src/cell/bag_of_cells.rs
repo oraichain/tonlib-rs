@@ -441,12 +441,17 @@ mod tests {
             .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
             .unwrap();
 
+        let mut found_matching_hash = false;
         if let Some(block_extra) = block_extra.0 {
-            println!("block extra: {:?}", block_extra.custom.shards)
-            // if let Some(custom) = block_extra.custom {
-
-            // }
+            for shard_data in block_extra.custom.shards.values() {
+                for shard in shard_data {
+                    if hex::encode(shard.to_owned().root_hash).eq("5d5215c4dd5e2dc3e8b0640339303135cd7296c577e37d1f0e1781cde6fb9629") {
+                        found_matching_hash = true;
+                    }
+                }
+            }
         }
+        assert_eq!(found_matching_hash, true);
     }
 
     #[test]
