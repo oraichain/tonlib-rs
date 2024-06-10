@@ -622,6 +622,8 @@ mod tests {
             _ => panic!("Wrong config parameter"),
         }
         assert_eq!(next_validator_param.is_none(), true);
+
+        // println!("{:?}", block_extra.custom.shards);
         Ok(())
     }
 }

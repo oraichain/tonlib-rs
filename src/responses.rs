@@ -23,7 +23,7 @@ pub struct McBlockExtra {
     // shard_hashes: Hashmap,
     // shard_fees: Hashmap,
     // replacement of shard_hashes, since it is unlikely that we will need the entire hashmap data of shard hashes, only shard data
-    pub shards: Vec<ShardDescr>,
+    pub shards: HashMap<String, Vec<ShardDescr>>,
     pub config: ConfigParams,
 }
 
@@ -89,4 +89,48 @@ pub struct ValidatorDescr {
     pub public_key: Vec<u8>,
     pub weight: u64,
     pub adnl_addr: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub enum BinTreeRes {
+    Fork(Box<BinTreeFork>),
+    Leaf(BinTreeLeafRes),
+}
+
+#[derive(Clone, Debug)]
+pub struct BinTreeFork {
+    pub left: Option<BinTreeRes>,
+    pub right: Option<BinTreeRes>,
+}
+
+#[derive(Clone, Debug)]
+pub enum BinTreeLeafRes {
+    ShardDescr(ShardDescr),
+}
+
+impl BinTreeRes {
+    pub fn get_all_shard_descrs_as_vec(&self) -> Vec<ShardDescr> {
+        let mut result = Vec::new();
+        self.collect_shard_descrs_into_vec(&mut result);
+        result
+    }
+
+    fn collect_shard_descrs_into_vec(&self, vec: &mut Vec<ShardDescr>) {
+        match self {
+            BinTreeRes::Fork(fork) => {
+                if let Some(left) = &fork.left {
+                    left.collect_shard_descrs_into_vec(vec);
+                }
+                if let Some(right) = &fork.right {
+                    right.collect_shard_descrs_into_vec(vec);
+                }
+            }
+            BinTreeRes::Leaf(leaf_res) => match leaf_res {
+                BinTreeLeafRes::ShardDescr(descr) => {
+                    vec.push(descr.clone());
+                }
+                _ => (),
+            },
+        }
+    }
 }

@@ -18,7 +18,7 @@ pub use dict_loader::*;
 pub use error::*;
 use log::debug;
 use num_bigint::BigUint;
-use num_traits::{FromPrimitive, One, ToPrimitive};
+use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
 pub use parser::*;
 pub use raw::*;
 use sha2::{Digest, Sha256};
@@ -28,8 +28,9 @@ pub use util::*;
 
 use crate::hashmap::Hashmap;
 use crate::responses::{
-    BlkPrevRef, BlockExtra, BlockInfo, ConfigParam, ConfigParams, ConfigParamsValidatorSet,
-    ExtBlkRef, McBlockExtra, ShardDescr, ValidatorDescr, Validators,
+    BinTreeFork, BinTreeLeafRes, BinTreeRes, BlkPrevRef, BlockExtra, BlockInfo, ConfigParam,
+    ConfigParams, ConfigParamsValidatorSet, ExtBlkRef, McBlockExtra, ShardDescr, ValidatorDescr,
+    Validators,
 };
 
 mod bag_of_cells;
@@ -1218,7 +1219,6 @@ impl Cell {
         }
         let key_block = parser.load_bit()?;
         mc_block_extra.shards = Cell::load_shard_hashes(cell, ref_index, parser)?;
-
         Cell::load_shard_fees(cell, ref_index, parser)?;
 
         let cell_r1 = cell.reference(ref_index.to_owned())?;
@@ -1267,7 +1267,7 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<Vec<ShardDescr>, TonCellError> {
+    ) -> Result<HashMap<String, Vec<ShardDescr>>, TonCellError> {
         let hashmap = Cell::load_hash_map_e(
             cell,
             ref_index,
@@ -1283,25 +1283,143 @@ impl Cell {
                         |ref_ref_cell: &Cell,
                          inner_inner_ref_index: &mut usize,
                          parser: &mut CellParser| {
-                            Cell::load_bin_tree(ref_ref_cell, inner_inner_ref_index, parser)
+                            Cell::load_bin_tree(
+                                ref_ref_cell,
+                                inner_inner_ref_index,
+                                parser,
+                                Some(Cell::load_shard_descr),
+                            )
                         },
                     ),
                 )?;
                 Ok(result.0)
             },
         )?;
-        // FIXME: actually impl and return a list of shards
-        Ok(vec![])
+
+        let mut result_map = HashMap::new();
+        for (key, value) in hashmap {
+            if let Some(tree_res) = value {
+                let shard_descrs = tree_res.get_all_shard_descrs_as_vec();
+                result_map.insert(key, shard_descrs);
+            } else {
+                result_map.insert(key, Vec::new());
+            }
+        }
+
+        Ok(result_map)
     }
 
-    pub fn load_bin_tree(
+    pub fn load_bin_tree<F>(
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
-        // TODO: impl
-        // We can safely ignore this since it is called in load_ref_if_exist
-        Ok(())
+        parse_option: Option<F>,
+    ) -> Result<Option<BinTreeRes>, TonCellError>
+    where
+        F: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<BinTreeLeafRes, TonCellError>
+            + Copy,
+    {
+        Cell::load_bin_tree_r(cell, ref_index, parser, parse_option)
+    }
+
+    pub fn load_bin_tree_r<F>(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        parse_option: Option<F>,
+    ) -> Result<Option<BinTreeRes>, TonCellError>
+    where
+        F: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<BinTreeLeafRes, TonCellError>
+            + Copy,
+    {
+        if !parser.load_bit()? {
+            if parse_option.is_none() {
+                return Ok(None);
+            }
+
+            let parse = parse_option.unwrap();
+            let res: BinTreeLeafRes = parse(cell, ref_index, parser)?;
+            return Ok(Some(BinTreeRes::Leaf(res)));
+        } else {
+            let left = cell
+                .load_ref_if_exist(
+                    ref_index,
+                    Some(
+                        |ref_ref_cell: &Cell,
+                         inner_inner_ref_index: &mut usize,
+                         parser: &mut CellParser| {
+                            Cell::load_bin_tree_r(
+                                ref_ref_cell,
+                                inner_inner_ref_index,
+                                parser,
+                                parse_option,
+                            )
+                        },
+                    ),
+                )?
+                .0;
+
+            let right = cell
+                .load_ref_if_exist(
+                    ref_index,
+                    Some(
+                        |ref_ref_cell: &Cell,
+                         inner_inner_ref_index: &mut usize,
+                         parser: &mut CellParser| {
+                            Cell::load_bin_tree_r(
+                                ref_ref_cell,
+                                inner_inner_ref_index,
+                                parser,
+                                parse_option,
+                            )
+                        },
+                    ),
+                )?
+                .0;
+
+            return Ok(Some(BinTreeRes::Fork(Box::new(BinTreeFork {
+                left: left.unwrap_or(None),
+                right: right.unwrap_or(None),
+            }))));
+        }
+    }
+
+    pub fn load_shard_descr(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<BinTreeLeafRes, TonCellError> {
+        let _type = parser.load_uint(4)?;
+        if _type != BigUint::from_u8(0xa).unwrap() && _type != BigUint::from_u8(0xb).unwrap() {
+            return Err(TonCellError::cell_parser_error("not a ShardDescr"));
+        }
+
+        let mut shard_descr = ShardDescr::default();
+        shard_descr.seqno = parser.load_u64(32)?;
+        // println!("Shard {}", shard_descr.seqno);
+        shard_descr.reg_mc_seqno = parser.load_u32(32)?;
+        shard_descr.start_lt = parser.load_uint(64)?;
+        shard_descr.end_lt = parser.load_uint(64)?;
+        shard_descr.root_hash = parser.load_bits(256)?;
+        shard_descr.file_hash = parser.load_bits(256)?;
+        parser.load_bit()?; // before_split
+        parser.load_bit()?; // before merge
+        parser.load_bit()?; // want split
+        parser.load_bit()?; // want merge
+        parser.load_bit()?; // nx_cc_updated
+        let flag = parser.load_uint(3)?; //flags
+        if flag != BigUint::zero() {
+            return Err(TonCellError::cell_parser_error(
+                "ShardDescr data.flags !== 0",
+            ));
+        }
+        parser.load_uint(32)?; //next_catchain_seqno
+        shard_descr.next_validator_shard = parser.load_uint(64)?;
+        parser.load_uint(32)?; //min_ref_mc_seqno
+        shard_descr.gen_utime = parser.load_u64(32)?;
+        // TODO: load split_merge_at, fees_collected, funds_created
+
+        Ok(BinTreeLeafRes::ShardDescr(shard_descr))
     }
 
     pub fn load_shard_fees(
