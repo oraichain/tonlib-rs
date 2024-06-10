@@ -445,7 +445,9 @@ mod tests {
         if let Some(block_extra) = block_extra.0 {
             for shard_data in block_extra.custom.shards.values() {
                 for shard in shard_data {
-                    if hex::encode(shard.to_owned().root_hash).eq("5d5215c4dd5e2dc3e8b0640339303135cd7296c577e37d1f0e1781cde6fb9629") {
+                    if hex::encode(shard.to_owned().root_hash)
+                        .eq("5d5215c4dd5e2dc3e8b0640339303135cd7296c577e37d1f0e1781cde6fb9629")
+                    {
                         found_matching_hash = true;
                     }
                 }
@@ -465,24 +467,9 @@ mod tests {
         let hash = first_root.reference(0).unwrap().get_hash(0);
         println!("hash: {:?}", hex::encode(hash));
 
-        let ref_index = &mut 0;
-        let block_data = first_root.reference(0).unwrap();
-        let block_info = block_data
-            .load_ref_if_exist(ref_index, Some(Cell::load_block_info))
-            .unwrap();
-        block_data
-            .load_ref_if_exist(ref_index, Some(Cell::load_value_flow))
-            .unwrap();
-
-        block_data
-            .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
-            .unwrap();
-
-        block_data
-            .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
-            .unwrap();
-
-        if let Some(block_info) = block_info.0 {
+        let block_data_cell = first_root.reference(0).unwrap();
+        let block_data = block_data_cell.load_block().unwrap();
+        if let Some(block_info) = block_data.info {
             // extract prev_blk_info
             let prev_blk = block_info.prev_ref.first_prev.unwrap();
             assert_eq!(
@@ -517,23 +504,9 @@ mod tests {
             "current index: {:?}",
             parser.bit_reader.position_in_bits().unwrap()
         );
-        let cell_type = first_root.get_bits_descriptor();
         println!("cell type: {:?}", first_root.cell_type);
-        first_root
-            .load_ref_if_exist(ref_index, Some(Cell::load_block_info))
-            .unwrap();
-        first_root
-            .load_ref_if_exist(ref_index, Some(Cell::load_value_flow))
-            .unwrap();
-
-        first_root
-            .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
-            .unwrap();
-
-        let block_extra = first_root
-            .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
-            .unwrap();
-        let block_extra = block_extra.0.unwrap();
+        let block_data = first_root.load_block().unwrap();
+        let block_extra = block_data.extra.unwrap();
         let param = block_extra
             .custom
             .config
@@ -577,22 +550,8 @@ mod tests {
         );
         let cell_type = first_root.get_bits_descriptor();
         println!("cell type: {:?}", cell_type);
-        first_root
-            .load_ref_if_exist(ref_index, Some(Cell::load_block_info))
-            .unwrap();
-        first_root
-            .load_ref_if_exist(ref_index, Some(Cell::load_value_flow))
-            .unwrap();
-
-        first_root
-            .load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
-            .unwrap();
-
-        let block_extra = first_root
-            .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
-            .unwrap();
-
-        let block_extra = block_extra.0.unwrap();
+        let block_data = first_root.load_block().unwrap();
+        let block_extra = block_data.extra.unwrap();
         let param = block_extra
             .custom
             .config

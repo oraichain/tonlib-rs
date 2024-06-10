@@ -28,9 +28,9 @@ pub use util::*;
 
 use crate::hashmap::Hashmap;
 use crate::responses::{
-    BinTreeFork, BinTreeLeafRes, BinTreeRes, BlkPrevRef, BlockExtra, BlockInfo, ConfigParam,
-    ConfigParams, ConfigParamsValidatorSet, ExtBlkRef, McBlockExtra, ShardDescr, ValidatorDescr,
-    Validators,
+    BinTreeFork, BinTreeLeafRes, BinTreeRes, BlkPrevRef, BlockData, BlockExtra, BlockInfo,
+    ConfigParam, ConfigParams, ConfigParamsValidatorSet, ExtBlkRef, McBlockExtra, ShardDescr,
+    ValidatorDescr, Validators,
 };
 
 mod bag_of_cells;
@@ -1663,6 +1663,27 @@ impl Cell {
             validator.adnl_addr = parser.load_bits(256)?;
         }
         Ok(Some(validator))
+    }
+
+    pub fn load_block(&self) -> Result<BlockData, TonCellError> {
+        let ref_index = &mut 0;
+        let block_info = self
+            .load_ref_if_exist(ref_index, Some(Cell::load_block_info))
+            .unwrap();
+        self.load_ref_if_exist(ref_index, Some(Cell::load_value_flow))
+            .unwrap();
+
+        self.load_ref_if_exist(ref_index, Some(Cell::load_merkle_update))
+            .unwrap();
+
+        let block_extra = self
+            .load_ref_if_exist(ref_index, Some(Cell::load_block_extra))
+            .unwrap();
+
+        Ok(BlockData {
+            info: block_info.0,
+            extra: block_extra.0,
+        })
     }
 }
 

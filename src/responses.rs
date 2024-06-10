@@ -3,6 +3,12 @@ use std::collections::HashMap;
 use num_bigint::BigUint;
 
 #[derive(Clone, Debug, Default)]
+pub struct BlockData {
+    pub info: Option<BlockInfo>,
+    pub extra: Option<BlockExtra>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct BlockInfo {
     pub prev_ref: BlkPrevRef,
 }
@@ -22,7 +28,6 @@ pub struct McBlockExtra {
     // key_block: u8,
     // shard_hashes: Hashmap,
     // shard_fees: Hashmap,
-    // replacement of shard_hashes, since it is unlikely that we will need the entire hashmap data of shard hashes, only shard data
     pub shards: HashMap<String, Vec<ShardDescr>>,
     pub config: ConfigParams,
 }
