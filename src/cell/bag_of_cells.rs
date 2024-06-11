@@ -97,7 +97,6 @@ impl BagOfCells {
     pub fn parse_hex(hex: &str) -> Result<BagOfCells, TonCellError> {
         let str: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
         let bin = hex::decode(str.as_str()).map_boc_deserialization_error()?;
-        println!("bin: {:?}", bin.len());
         Self::parse(&bin)
     }
 
@@ -412,6 +411,35 @@ mod tests {
         let boc = BagOfCells::from_root(root);
         let _raw = boc.to_raw()?;
         Ok(())
+    }
+
+    #[test]
+    fn test_load_shard_account_blocks() {
+        // the boc below is txProof, which is from: await liteClient.getAccountTransaction(Address.parse(addressRaw), lt, wantedShardInfo);
+        // where address is: UQAQw3YLaG2HvvH1xaJehyAaJ--PX4gFxi70NwC1p_b4nISf
+        // shard: { workchain: 0, shard: '2000000000000000', seqno: 43884169 }
+        let boc = "b5ee9c7201021e01000444000946030299328dbd84b0ece362aec8cb04f89f7f21b1908dd55542ae9983914d81b7d1002801241011ef55aaffffff110203040502a09bc7a987000000008001029d9e8900000001020000000000000000000000006660c34000002aabe17f71c000002aabe17f71fa6f2862d90008bf1b024720d0024711a2c400000007000000000000002e0607284801015643265b6cffa70dc9e813a64a3f6e6b6cb2d9eecdd4c0132d7cc8b6f6980234000228480101f1ef4849255d409ea4809cc7af48726e7cba7e8e6a0551120a2191684b576d7b002723894a33f6fdbfde8507db6befffe5a57ad26aadb2f90b7d5beab6b118f0ddad8153bb784b1ac28cac5958bde45d7b4839cd371f8b6d2dbbc6f1626ebb185dd5b03bcce7bbb54008090a009800002aabe1702f84024720d0fe987ca6d7a6c373433d0501a25685d620df208aafe798cbfd3af74103fe9d9310b099470cd8b563a069a8d742321b3f1dfa3c84cc8283b8d90f66cf6f3b4bd0009800002aabe160ed5f029d9e88cbb5b00727d017d06a3e812942605fbbed8510a823bba5be5af7e24649c971ece4a7cf33e0bdb68bd5c222c9b92253dbea5b8ac31fb0122b5e374506e90768a328480101004ff947a10e7a705c6c825569cac87098eb2c125b5fe9f8e95bb91d2b4b8940001828480101aa145fdfa31eb650bd814230f6a9a5b339d9feade846a837416ea3dfed1e5f51001a2109a132c44cb20b220b6109962265900c0d2209106689fbe10e0f2848010185f95f36a058aa0dfedf0274cbf62bc61a5dc4fc3f747771a0b5a4ff2bccd06000142848010143509a6ced216b57d9489df9a7634b3b0606d8c12918dd4defb551cb8fe34fd500142209104c87b6e9101122091032c1051d121328480101a86e1f1f96d15eadcf76cda1d7d7a608e86aa93cdbaad190b83d3748bab2d72800102209101789f79114152848010188cef0c4bf6b35316a6dd1749c7708a562889991a40dbff5652c1f4a7da9251f001222091014fe07211617284801018a3019f94446ea33abccf41a779e4c7c448ea69cb61727b22fb558b7c2208181000922070e170aed181928480101c6f5b7be07850ac1d3638e6bd89328c8fa3cb4caa43a7ee58ba48e43a6336dd0000e28480101e1414eaea227f221b8cdef63756d370621464cdc96e172a3b9b4931061d17a990010220968d3f137901a1b22a1bd0dd82da1b61efbc7d716897a1c80689fbe3d7e201718bbd0dc02d69fdbe270c8361bca2186ec16d0db0f7de3eb8b44bd0e40344fdf1ebf100b8c5de86e016b4fedf1394000002aabe17f71c1320d86f41c1d284801013064f2f17d28bcf9b6dc4fa1a9ab257b0ef5f696c9c609b7304dc7b41215f3bf00062848010125d1ed22d37fa5ec44b4426f00f33ee3f59e527e8252b9da266172d342c0f5fd00030082726303c5d7b1bc0da5acf09ab3b9cfdffb55ea0ec7f6929c09a76a49932263d1b92e977b92eb9d78b2494efa376962706b566f3b92ab7eea53e12ebdaf034cc0c3";
+        let cells = BagOfCells::parse_hex(boc).unwrap();
+        let root = cells.single_root().unwrap();
+        let block_extra_cell = root.reference(0).unwrap().reference(3).unwrap();
+        let block_extra =
+            Cell::load_block_extra(block_extra_cell, &mut 0, &mut block_extra_cell.parser())
+                .unwrap();
+        assert_eq!(block_extra.account_blocks.is_some(), true);
+        let account_blocks = block_extra.account_blocks.unwrap();
+        for acc_block in account_blocks.into_iter() {
+            let txs = acc_block.1.transactions;
+            for (_key, tx) in txs {
+                assert_eq!(tx.1.is_some(), true);
+                let tx_cell = tx.1.unwrap();
+                let tx_hash = tx_cell.get_hash(0);
+                assert_eq!(
+                    hex::encode(tx_hash),
+                    "25d1ed22d37fa5ec44b4426f00f33ee3f59e527e8252b9da266172d342c0f5fd".to_string()
+                );
+                return;
+            }
+        }
     }
 
     #[test]

@@ -301,7 +301,7 @@ impl CellParser<'_> {
         if magic != 0x8e81278a {
             return Err(TonCellError::cell_parser_error("Not a SigPubKey"));
         }
-        let pubKey = self.load_bits(256)?;
+        let pubKey = self.load_bytes(32)?;
         // println!("pub key: {:?}", hex::encode(pubKey.clone()));
         Ok(pubKey)
     }

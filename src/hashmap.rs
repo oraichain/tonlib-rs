@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 use log::debug;
 use num_bigint::BigUint;
@@ -126,7 +126,7 @@ where
             let left_ref_cell = cell.reference(ref_index.to_owned())?;
             let left_parser = &mut left_ref_cell.parser();
             self.load_hashmap(
-              left_ref_cell,
+                left_ref_cell,
                 &mut 0usize,
                 left_parser,
                 n - 1,
@@ -169,4 +169,24 @@ where
         }
         Ok(())
     }
+}
+
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct HashmapAugResult<T1, T2>
+where
+    T1: Clone + Debug + Default,
+    T2: Clone + Debug + Default,
+{
+    pub value: T1,
+    pub extra: T2,
+}
+
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct HashmapAugEResult<T1, T2>
+where
+    T1: Clone + Debug + Default,
+    T2: Clone + Debug + Default,
+{
+    pub value: T1,
+    pub extra: T2,
 }

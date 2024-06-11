@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use num_bigint::BigUint;
 
+use crate::cell::Cell;
+
 #[derive(Clone, Debug, Default)]
 pub struct BlockData {
     pub info: Option<BlockInfo>,
@@ -17,10 +19,26 @@ pub struct BlockInfo {
 pub struct BlockExtra {
     // pub in_msg_descr: Cell,
     // pub out_msg_descr: Cell,
-    // pub account_blocks: Cell,
+    pub account_blocks: Option<HashMap<String, AccountBlock>>,
     // pub rand_seed: Vec<u8>,
     // pub created_by: Vec<u8>,
     pub custom: McBlockExtra,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AccountBlock {
+    pub account_addr: Vec<u8>,
+    pub transactions: HashMap<String, (Option<Transaction>, Option<Cell>)>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Transaction {
+    pub hash: Vec<u8>,
+    pub account_addr: Vec<u8>,
+    pub lt: u64,
+    pub prev_trans_hash: Vec<u8>,
+    pub prev_trans_lt: u64,
+    pub now: u32,
 }
 
 #[derive(Clone, Debug, Default)]
