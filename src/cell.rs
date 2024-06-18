@@ -29,8 +29,8 @@ pub use util::*;
 use crate::hashmap::{Hashmap, HashmapAugEResult, HashmapAugResult};
 use crate::responses::{
     AccountBlock, BinTreeFork, BinTreeLeafRes, BinTreeRes, BlkPrevRef, BlockData, BlockExtra,
-    BlockInfo, ConfigParam, ConfigParams, ConfigParamsValidatorSet, ExtBlkRef, McBlockExtra,
-    ShardDescr, Transaction, ValidatorDescr, Validators,
+    BlockInfo, ConfigParam, ConfigParams, ConfigParamsValidatorSet, ExtBlkRef, MaybeRefData,
+    McBlockExtra, ShardDescr, Transaction, TransactionMessage, ValidatorDescr, Validators,
 };
 
 mod bag_of_cells;
@@ -743,14 +743,18 @@ impl Cell {
         parser: &mut CellParser,
         parse_option: Option<F>,
         parse_prunned_branch_cell_option: Option<F2>,
-    ) -> Result<(Option<T>, Option<&Cell>), TonCellError>
+    ) -> Result<MaybeRefData<T>, TonCellError>
     where
         F: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError>,
         F2: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T, TonCellError>,
+        T: Clone + Debug + Default,
     {
         let exist = parser.load_bit()?;
         if !exist || parse_option.is_none() {
-            return Ok((None, None));
+            return Ok(MaybeRefData {
+                data: None,
+                cell: None,
+            });
         };
         let reference = self.reference(ref_index.to_owned())?;
         *ref_index += 1;
@@ -762,12 +766,21 @@ impl Cell {
         if reference.cell_type != CellType::PrunnedBranchCell as u8 {
             let f = parse_option.unwrap();
             let res = f(&reference, &mut 0usize, &mut new_parser)?;
-            return Ok((Some(res), None));
+            return Ok(MaybeRefData {
+                data: Some(res),
+                cell: None,
+            });
         } else if let Some(f2) = parse_prunned_branch_cell_option {
             let res = f2(&reference, &mut 0usize, &mut new_parser)?;
-            return Ok((Some(res), None));
+            return Ok(MaybeRefData {
+                data: Some(res),
+                cell: None,
+            });
         }
-        Ok((None, Some(reference)))
+        Ok(MaybeRefData {
+            data: None,
+            cell: Some(reference.as_ref().clone()),
+        })
     }
 
     pub fn load_ref_if_exist_without_self<F, T>(
@@ -965,7 +978,7 @@ impl Cell {
             None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<McBlockExtra, TonCellError>>,
         )?;
 
-        if let Some(custom) = res.0 {
+        if let Some(custom) = res.data {
             block_extra.custom = custom;
         }
         Ok(block_extra)
@@ -1115,7 +1128,10 @@ impl Cell {
             |ref_cell: &Cell, inner_ref_index: &mut usize, _parser: &mut CellParser| {
                 let result =
                     ref_cell.load_ref_if_exist(inner_ref_index, Some(Cell::load_transaction))?;
-                Ok((result.0, result.1.map(|v| v.clone())))
+                Ok(MaybeRefData {
+                    data: result.0,
+                    cell: result.1.map(|v| v.clone()),
+                })
             },
             Cell::load_currency_collection,
         )?;
@@ -1191,9 +1207,12 @@ impl Cell {
 
     pub fn load_transaction(
         cell: &Cell,
-        _ref_index: &mut usize,
+        ref_index: &mut usize,
         parser: &mut CellParser,
     ) -> Result<Transaction, TonCellError> {
+        if parser.load_uint(4)? != BigUint::from_u8(7).unwrap() {
+            return Err(TonCellError::cell_parser_error("Not a transaction"));
+        }
         let mut transaction = Transaction::default();
         transaction.hash = cell.get_hash(0);
         transaction.account_addr = parser.load_bytes(32)?;
@@ -1201,7 +1220,94 @@ impl Cell {
         transaction.prev_trans_hash = parser.load_bytes(32)?;
         transaction.prev_trans_lt = parser.load_u64(64)?;
         transaction.now = parser.load_u32(32)?;
+        transaction.outmsg_cnt = parser.load_uint(15)?.to_usize().unwrap_or_default();
+        transaction.orig_status = Cell::load_account_status(parser)?;
+        transaction.end_status = Cell::load_account_status(parser)?;
+
+        let ref_cell = cell.reference(*ref_index)?;
+        *ref_index += 1;
+
+        if ref_cell.cell_type == CellType::OrdinaryCell as u8 {
+            let inner_ref_index = &mut 0;
+            let inner_parser = &mut ref_cell.parser();
+            transaction.in_msg = ref_cell.load_maybe_ref(
+                inner_ref_index,
+                inner_parser,
+                Some(Cell::load_transaction_message),
+                None::<
+                    fn(
+                        &Cell,
+                        &mut usize,
+                        &mut CellParser,
+                    ) -> Result<TransactionMessage, TonCellError>,
+                >,
+            )?;
+            transaction.out_msgs = Cell::load_hash_map_e(
+                &ref_cell,
+                inner_ref_index,
+                inner_parser,
+                15,
+                |inner_ref_cell: &Cell,
+                 inner_inner_ref_index: &mut usize,
+                 _inner_inner_ref_parser,
+                 _n| {
+                    inner_ref_cell
+                        .load_ref_if_exist(
+                            inner_inner_ref_index,
+                            Some(Cell::load_transaction_message),
+                        )
+                        .map(|res| {
+                            Some(MaybeRefData {
+                                data: res.0,
+                                cell: res.1.map(|cell| cell.clone()),
+                            })
+                        })
+                },
+            )?;
+        }
+        Cell::load_currency_collection(cell, ref_index, parser)?;
+        cell.load_ref_if_exist(ref_index, Some(Cell::load_hash_update))?;
+        cell.load_ref_if_exist(ref_index, Some(Cell::load_transaction_descr))?;
         Ok(transaction)
+    }
+
+    pub fn load_account_status(parser: &mut CellParser) -> Result<String, TonCellError> {
+        let status = parser.load_uint(2)?.to_u8().unwrap_or_default();
+        if status == 0 {
+            return Ok("uninit".to_string());
+        } else if status == 1 {
+            return Ok("frozen".to_string());
+        } else if status == 2 {
+            return Ok("active".to_string());
+        } else if status == 3 {
+            return Ok("nonexist".to_string());
+        } else {
+            Err(TonCellError::cell_parser_error("Wrong account status"))
+        }
+    }
+
+    pub fn load_transaction_message(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<TransactionMessage, TonCellError> {
+        // FIXME: impl loadMaybe, loadEither and loadAny
+        let mut tx_message = TransactionMessage::default();
+        tx_message.hash = cell.get_hash(0);
+        println!(
+            "tx mesage hash: {:?}",
+            hex::encode(tx_message.hash.clone()).to_string()
+        );
+        Ok(tx_message)
+    }
+
+    pub fn load_transaction_descr(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        // no need to impl this for now because it's in a different reference
+        Ok(())
     }
 
     pub fn load_hash_update(

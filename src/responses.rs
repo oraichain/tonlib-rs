@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 use num_bigint::BigUint;
 
@@ -8,6 +8,15 @@ use crate::cell::Cell;
 pub struct BlockData {
     pub info: Option<BlockInfo>,
     pub extra: Option<BlockExtra>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MaybeRefData<T>
+where
+    T: Clone + Debug + Default,
+{
+    pub data: Option<T>,
+    pub cell: Option<Cell>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -28,7 +37,7 @@ pub struct BlockExtra {
 #[derive(Clone, Debug, Default)]
 pub struct AccountBlock {
     pub account_addr: Vec<u8>,
-    pub transactions: HashMap<String, (Option<Transaction>, Option<Cell>)>,
+    pub transactions: HashMap<String, MaybeRefData<Transaction>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -39,6 +48,40 @@ pub struct Transaction {
     pub prev_trans_hash: Vec<u8>,
     pub prev_trans_lt: u64,
     pub now: u32,
+    pub outmsg_cnt: usize,
+    pub orig_status: String,
+    pub end_status: String,
+    pub in_msg: MaybeRefData<TransactionMessage>,
+    pub out_msgs: HashMap<String, MaybeRefData<TransactionMessage>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TransactionMessage {
+    pub hash: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RawTransactionMessage {
+    pub msg_type: BigUint,
+    pub ihr_disabled: bool,
+    pub bounce: bool,
+    pub bounced: bool,
+    pub src: TonAddress,
+    pub dest: TonAddress,
+    // value RawCurrencyCollection
+    pub value: Vec<u8>,
+    pub ihr_fee: Vec<u8>,
+    pub fwd_fee: Vec<u8>,
+    pub created_lt: BigUint,
+    pub created_at: BigUint,
+    pub import_fee: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TonAddress {
+    pub raw: Vec<u8>,
+    pub hash: Vec<u8>,
+    pub wc: u8,
 }
 
 #[derive(Clone, Debug, Default)]
