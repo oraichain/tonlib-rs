@@ -9,6 +9,7 @@ use num_traits::FromPrimitive;
 use crate::address::TonAddress;
 use crate::cell::util::*;
 use crate::cell::{MapTonCellError, TonCellError};
+use crate::responses::VarUInteger;
 
 pub struct CellParser<'a> {
     pub(crate) bit_len: usize,
@@ -281,19 +282,18 @@ impl CellParser<'_> {
         Ok((s, n_usize))
     }
 
-    pub fn load_var_uinteger(
-        &mut self,
-        bit_len: usize,
-    ) -> Result<(BigUint, BigUint), TonCellError> {
+    pub fn load_var_uinteger(&mut self, bit_len: usize) -> Result<VarUInteger, TonCellError> {
+        let mut data = VarUInteger::default();
         let len = self.load_uint_less(bit_len)?;
-        let len_usize = usize::try_from(len.clone()).map_err(TonCellError::cell_parser_error)?;
-        let mut value = BigUint::zero();
-        if len_usize == 0 {
-            // TODO
+        data.len = len.clone();
+        let len_usize = usize::try_from(len).map_err(TonCellError::cell_parser_error)?;
+        data.value = if len_usize == 0 {
+            BigUint::zero()
         } else {
-            value = self.load_uint(len_usize * 8)?;
-        }
-        Ok((len, value))
+            self.load_uint(len_usize * 8)?
+        };
+
+        Ok(data)
     }
 
     pub fn load_sig_pub_key(&mut self) -> Result<Vec<u8>, TonCellError> {
@@ -301,8 +301,14 @@ impl CellParser<'_> {
         if magic != 0x8e81278a {
             return Err(TonCellError::cell_parser_error("Not a SigPubKey"));
         }
-        let pubKey = self.load_bytes(32)?;
-        // println!("pub key: {:?}", hex::encode(pubKey.clone()));
-        Ok(pubKey)
+        let pubkey = self.load_bytes(32)?;
+        // println!("pub key: {:?}", hex::encode(pubkey.clone()));
+        Ok(pubkey)
+    }
+
+    pub fn load_anycast(&mut self) -> Result<(), TonCellError> {
+        let depth = self.load_uint_le(30)?;
+        self.load_bits(usize::try_from(depth).map_err(TonCellError::cell_parser_error)?)?;
+        Ok(())
     }
 }

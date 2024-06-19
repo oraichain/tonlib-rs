@@ -15,7 +15,7 @@ lazy_static! {
     pub static ref CRC_16_XMODEM: Crc<u16> = Crc::<u16>::new(&crc::CRC_16_XMODEM);
 }
 
-#[derive(PartialEq, Eq, Clone, Hash)]
+#[derive(PartialEq, Eq, Clone, Hash, Default)]
 pub struct TonAddress {
     pub workchain: i32,
     pub hash_part: [u8; 32],

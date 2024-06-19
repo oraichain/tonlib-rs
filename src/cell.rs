@@ -26,11 +26,13 @@ pub use slice::*;
 pub use state_init::*;
 pub use util::*;
 
+use crate::address::TonAddress;
 use crate::hashmap::{Hashmap, HashmapAugEResult, HashmapAugResult};
 use crate::responses::{
     AccountBlock, BinTreeFork, BinTreeLeafRes, BinTreeRes, BlkPrevRef, BlockData, BlockExtra,
-    BlockInfo, ConfigParam, ConfigParams, ConfigParamsValidatorSet, ExtBlkRef, MaybeRefData,
-    McBlockExtra, ShardDescr, Transaction, TransactionMessage, ValidatorDescr, Validators,
+    BlockInfo, CommonTransactionMessageInfo, ConfigParam, ConfigParams, ConfigParamsValidatorSet,
+    CurrencyCollection, ExtBlkRef, MaybeRefData, McBlockExtra, ShardDescr, Transaction,
+    TransactionMessage, ValidatorDescr, Validators, VarUInteger,
 };
 
 mod bag_of_cells;
@@ -803,6 +805,50 @@ impl Cell {
         Err(TonCellError::cell_parser_error("Load ref not supported"))
     }
 
+    pub fn load_maybe<F, T, P>(
+        &self,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        parse_option: Option<F>,
+        params: Option<P>,
+    ) -> Result<Option<T>, TonCellError>
+    where
+        F: FnOnce(&Cell, &mut usize, &mut CellParser, Option<P>) -> Result<T, TonCellError>,
+    {
+        let exist = parser.load_bit()?;
+        if !exist || parse_option.is_none() {
+            return Ok(None);
+        }
+        let f = parse_option.unwrap();
+        f(self, ref_index, parser, params).map(|res| Some(res))
+    }
+
+    pub fn load_either<F1, F2, T1, T2>(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+        fx: F1,
+        fy: F2,
+    ) -> Result<(Option<T1>, Option<T2>), TonCellError>
+    where
+        F1: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T1, TonCellError>,
+        F2: FnOnce(&Cell, &mut usize, &mut CellParser) -> Result<T2, TonCellError>,
+    {
+        let exist = parser.load_bit()?;
+        if !exist {
+            return Ok((Some(fx(cell, ref_index, parser)?), None));
+        }
+        return Ok((None, Some(fy(cell, ref_index, parser)?)));
+    }
+
+    pub fn load_any(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<(), TonCellError> {
+        Ok(())
+    }
+
     pub fn load_block_info(
         cell: &Cell,
         ref_index: &mut usize,
@@ -1175,22 +1221,22 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
-        Cell::load_grams(parser)?;
-        Cell::load_extra_currency_collection(cell, ref_index, parser)?;
-        Ok(())
+    ) -> Result<CurrencyCollection, TonCellError> {
+        let mut collection = CurrencyCollection::default();
+        collection.grams = Cell::load_grams(parser)?;
+        collection.other = Cell::load_extra_currency_collection(cell, ref_index, parser)?;
+        Ok(collection)
     }
 
-    pub fn load_grams(parser: &mut CellParser) -> Result<(), TonCellError> {
-        parser.load_var_uinteger(16)?;
-        Ok(())
+    pub fn load_grams(parser: &mut CellParser) -> Result<VarUInteger, TonCellError> {
+        parser.load_var_uinteger(16)
     }
 
     pub fn load_extra_currency_collection(
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
+    ) -> Result<HashMap<String, VarUInteger>, TonCellError> {
         let result = Cell::load_hash_map_e(
             cell,
             ref_index,
@@ -1202,7 +1248,7 @@ impl Cell {
                 Ok(Some(result))
             },
         )?;
-        Ok(())
+        Ok(result)
     }
 
     pub fn load_transaction(
@@ -1294,11 +1340,45 @@ impl Cell {
         // FIXME: impl loadMaybe, loadEither and loadAny
         let mut tx_message = TransactionMessage::default();
         tx_message.hash = cell.get_hash(0);
-        println!(
-            "tx mesage hash: {:?}",
-            hex::encode(tx_message.hash.clone()).to_string()
-        );
+        tx_message.info = Cell::load_common_msg_info(cell, ref_index, parser)?;
         Ok(tx_message)
+    }
+
+    pub fn load_common_msg_info(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<CommonTransactionMessageInfo, TonCellError> {
+        let mut data = CommonTransactionMessageInfo::default();
+        let mut b = parser.load_bit()?;
+        if !b {
+            data.msg_type = "internal".to_string();
+            data.ihr_disabled = parser.load_bit()?;
+            data.bounce = parser.load_bit()?;
+            data.bounced = parser.load_bit()?;
+            data.src = Cell::load_msg_address_internal(cell, ref_index, parser)?;
+            data.dest = Cell::load_msg_address_internal(cell, ref_index, parser)?;
+            data.value = Cell::load_currency_collection(cell, ref_index, parser)?;
+            data.ihr_fee = Cell::load_grams(parser)?;
+            data.fwd_fee = Cell::load_grams(parser)?;
+            data.created_lt = parser.load_u64(64)?;
+            data.created_at = parser.load_u32(32)?;
+        } else {
+            b = parser.load_bit()?;
+            if !b {
+                data.msg_type = "external_in".to_string();
+                data.src = Cell::load_msg_address_external(cell, ref_index, parser)?;
+                data.dest = Cell::load_msg_address_internal(cell, ref_index, parser)?;
+                data.import_fee = Cell::load_grams(parser)?;
+            } else {
+                data.msg_type = "external_out".to_string();
+                data.src = Cell::load_msg_address_internal(cell, ref_index, parser)?;
+                data.dest = Cell::load_msg_address_external(cell, ref_index, parser)?;
+                data.created_lt = parser.load_u64(64)?;
+                data.created_at = parser.load_u32(32)?;
+            }
+        }
+        Ok(data)
     }
 
     pub fn load_transaction_descr(
@@ -1308,6 +1388,78 @@ impl Cell {
     ) -> Result<(), TonCellError> {
         // no need to impl this for now because it's in a different reference
         Ok(())
+    }
+
+    pub fn load_msg_address_internal(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<TonAddress, TonCellError> {
+        let mut ton_address = TonAddress::default();
+        let addr_type = parser.load_uint(2)?;
+        if addr_type == BigUint::from_u8(2).unwrap() {
+            cell.load_maybe(
+                ref_index,
+                parser,
+                Some(
+                    |_inner_cell: &Cell,
+                     _inner_ref_index: &mut usize,
+                     inner_parser: &mut CellParser,
+                     _n: Option<_>| { Ok(Some(inner_parser.load_anycast()?)) },
+                ),
+                None::<u64>,
+            )?;
+            ton_address.workchain = parser.load_i8(8)?.to_i32().unwrap_or_default();
+            ton_address.hash_part = parser.load_bytes(32)?.try_into().ok().unwrap_or_default();
+        } else if addr_type == BigUint::from_u8(3).unwrap() {
+            cell.load_maybe(
+                ref_index,
+                parser,
+                Some(
+                    |_inner_cell: &Cell,
+                     _inner_ref_index: &mut usize,
+                     inner_parser: &mut CellParser,
+                     _n: Option<_>| { Ok(Some(inner_parser.load_anycast()?)) },
+                ),
+                None::<u64>,
+            )?;
+            let addr_len = parser.load_uint(9)?;
+            ton_address.workchain = parser.load_i32(32)?;
+            ton_address.hash_part = parser
+                .load_bits(usize::try_from(addr_len).map_err(TonCellError::cell_parser_error)?)?
+                .try_into()
+                .ok()
+                .unwrap_or_default();
+        } else {
+            return Err(TonCellError::cell_parser_error(
+                "not a msg_address_internal",
+            ));
+        }
+        Ok(ton_address)
+    }
+
+    pub fn load_msg_address_external(
+        _cell: &Cell,
+        _ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<TonAddress, TonCellError> {
+        let mut ton_address = TonAddress::default();
+        let addr_type = parser.load_uint(2)?;
+        if addr_type == BigUint::from_u8(0).unwrap() {
+            return Ok(ton_address);
+        } else if addr_type == BigUint::from_u8(1).unwrap() {
+            let addr_len = parser.load_uint(9)?;
+            ton_address.hash_part = parser
+                .load_bits(usize::try_from(addr_len).map_err(TonCellError::cell_parser_error)?)?
+                .try_into()
+                .ok()
+                .unwrap_or_default();
+        } else {
+            return Err(TonCellError::cell_parser_error(
+                "not a msg_address_external",
+            ));
+        }
+        Ok(ton_address)
     }
 
     pub fn load_hash_update(

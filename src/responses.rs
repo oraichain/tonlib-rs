@@ -2,7 +2,13 @@ use std::{collections::HashMap, fmt::Debug};
 
 use num_bigint::BigUint;
 
-use crate::cell::Cell;
+use crate::{address::TonAddress, cell::Cell};
+
+#[derive(Clone, Debug, Default)]
+pub struct VarUInteger {
+    pub len: BigUint,
+    pub value: BigUint,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct BlockData {
@@ -58,30 +64,23 @@ pub struct Transaction {
 #[derive(Clone, Debug, Default)]
 pub struct TransactionMessage {
     pub hash: Vec<u8>,
+    pub info: CommonTransactionMessageInfo,
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct RawTransactionMessage {
-    pub msg_type: BigUint,
+pub struct CommonTransactionMessageInfo {
+    pub msg_type: String,
     pub ihr_disabled: bool,
     pub bounce: bool,
     pub bounced: bool,
     pub src: TonAddress,
     pub dest: TonAddress,
-    // value RawCurrencyCollection
-    pub value: Vec<u8>,
-    pub ihr_fee: Vec<u8>,
-    pub fwd_fee: Vec<u8>,
-    pub created_lt: BigUint,
-    pub created_at: BigUint,
-    pub import_fee: Vec<u8>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct TonAddress {
-    pub raw: Vec<u8>,
-    pub hash: Vec<u8>,
-    pub wc: u8,
+    pub value: CurrencyCollection,
+    pub ihr_fee: VarUInteger,
+    pub fwd_fee: VarUInteger,
+    pub created_lt: u64,
+    pub created_at: u32,
+    pub import_fee: VarUInteger,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -199,4 +198,10 @@ impl BinTreeRes {
             },
         }
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CurrencyCollection {
+    pub grams: VarUInteger,
+    pub other: HashMap<String, VarUInteger>,
 }
