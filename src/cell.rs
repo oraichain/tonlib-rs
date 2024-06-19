@@ -32,8 +32,8 @@ use crate::responses::{
     AccountBlock, AnyCell, BinTreeFork, BinTreeLeafRes, BinTreeRes, BlkPrevRef, BlockData,
     BlockExtra, BlockInfo, CommonTransactionMessageInfo, ConfigParam, ConfigParams,
     ConfigParamsValidatorSet, CurrencyCollection, ExtBlkRef, MaybeRefData, McBlockExtra,
-    ShardDescr, Transaction, TransactionBody, TransactionMessage, ValidatorDescr, Validators,
-    VarUInteger,
+    MessageType, ShardDescr, Transaction, TransactionBody, TransactionMessage, ValidatorDescr,
+    Validators, VarUInteger,
 };
 
 mod bag_of_cells;
@@ -1423,7 +1423,7 @@ impl Cell {
         let mut data = CommonTransactionMessageInfo::default();
         let mut b = parser.load_bit()?;
         if !b {
-            data.msg_type = "internal".to_string();
+            data.msg_type = MessageType::Internal as u8;
             data.ihr_disabled = parser.load_bit()?;
             data.bounce = parser.load_bit()?;
             data.bounced = parser.load_bit()?;
@@ -1437,12 +1437,12 @@ impl Cell {
         } else {
             b = parser.load_bit()?;
             if !b {
-                data.msg_type = "external_in".to_string();
+                data.msg_type = MessageType::ExternalIn as u8;
                 data.src = Cell::load_msg_address_external(cell, ref_index, parser)?;
                 data.dest = Cell::load_msg_address_internal(cell, ref_index, parser)?;
                 data.import_fee = Cell::load_grams(parser)?;
             } else {
-                data.msg_type = "external_out".to_string();
+                data.msg_type = MessageType::ExternalOut as u8;
                 data.src = Cell::load_msg_address_internal(cell, ref_index, parser)?;
                 data.dest = Cell::load_msg_address_external(cell, ref_index, parser)?;
                 data.created_lt = parser.load_u64(64)?;

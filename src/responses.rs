@@ -2,10 +2,7 @@ use std::{collections::HashMap, fmt::Debug};
 
 use num_bigint::BigUint;
 
-use crate::{
-    address::TonAddress,
-    cell::{Cell, CellParser},
-};
+use crate::{address::TonAddress, cell::Cell};
 
 #[derive(Clone, Debug, Default)]
 pub struct VarUInteger {
@@ -79,7 +76,7 @@ pub struct TransactionBody {
 
 #[derive(Clone, Debug, Default)]
 pub struct CommonTransactionMessageInfo {
-    pub msg_type: String,
+    pub msg_type: u8,
     pub ihr_disabled: bool,
     pub bounce: bool,
     pub bounced: bool,
@@ -91,6 +88,13 @@ pub struct CommonTransactionMessageInfo {
     pub created_lt: u64,
     pub created_at: u32,
     pub import_fee: VarUInteger,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
+pub enum MessageType {
+    Internal = 0,
+    ExternalIn = 1,
+    ExternalOut = 2,
 }
 
 #[derive(Clone, Debug, Default)]
