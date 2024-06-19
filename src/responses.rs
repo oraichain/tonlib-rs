@@ -2,7 +2,10 @@ use std::{collections::HashMap, fmt::Debug};
 
 use num_bigint::BigUint;
 
-use crate::{address::TonAddress, cell::Cell};
+use crate::{
+    address::TonAddress,
+    cell::{Cell, CellParser},
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct VarUInteger {
@@ -65,6 +68,13 @@ pub struct Transaction {
 pub struct TransactionMessage {
     pub hash: Vec<u8>,
     pub info: CommonTransactionMessageInfo,
+    pub body: TransactionBody,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TransactionBody {
+    pub any: Option<AnyCell>,
+    pub cell_ref: Option<(Option<AnyCell>, Option<Cell>)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -204,4 +214,11 @@ impl BinTreeRes {
 pub struct CurrencyCollection {
     pub grams: VarUInteger,
     pub other: HashMap<String, VarUInteger>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AnyCell {
+    pub cell: Cell,
+    pub ref_index: usize,
+    pub parser_positions_in_bits: u64,
 }

@@ -1,9 +1,10 @@
 use super::ArcCell;
 use crate::cell::{Cell, CellBuilder, TonCellError};
 
+#[derive(Clone, Debug, Default)]
 pub struct StateInitBuilder {
-    code: Option<ArcCell>,
-    data: Option<ArcCell>,
+    pub code: Option<ArcCell>,
+    pub data: Option<ArcCell>,
     split_depth: bool,
     tick_tock: bool,
     library: bool,

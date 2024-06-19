@@ -29,10 +29,11 @@ pub use util::*;
 use crate::address::TonAddress;
 use crate::hashmap::{Hashmap, HashmapAugEResult, HashmapAugResult};
 use crate::responses::{
-    AccountBlock, BinTreeFork, BinTreeLeafRes, BinTreeRes, BlkPrevRef, BlockData, BlockExtra,
-    BlockInfo, CommonTransactionMessageInfo, ConfigParam, ConfigParams, ConfigParamsValidatorSet,
-    CurrencyCollection, ExtBlkRef, MaybeRefData, McBlockExtra, ShardDescr, Transaction,
-    TransactionMessage, ValidatorDescr, Validators, VarUInteger,
+    AccountBlock, AnyCell, BinTreeFork, BinTreeLeafRes, BinTreeRes, BlkPrevRef, BlockData,
+    BlockExtra, BlockInfo, CommonTransactionMessageInfo, ConfigParam, ConfigParams,
+    ConfigParamsValidatorSet, CurrencyCollection, ExtBlkRef, MaybeRefData, McBlockExtra,
+    ShardDescr, Transaction, TransactionBody, TransactionMessage, ValidatorDescr, Validators,
+    VarUInteger,
 };
 
 mod bag_of_cells;
@@ -54,7 +55,7 @@ pub type SnakeFormattedDict = HashMap<[u8; 32], Vec<u8>>;
 pub const HASH_BYTES: usize = 32;
 pub const DEPTH_BYTES: usize = 2;
 
-#[derive(PartialEq, Eq, Clone, Hash)]
+#[derive(PartialEq, Eq, Clone, Hash, Default)]
 pub struct Cell {
     pub data: Vec<u8>,
     pub bit_len: usize,
@@ -845,8 +846,16 @@ impl Cell {
         cell: &Cell,
         ref_index: &mut usize,
         parser: &mut CellParser,
-    ) -> Result<(), TonCellError> {
-        Ok(())
+    ) -> Result<AnyCell, TonCellError> {
+        let position = parser
+            .bit_reader
+            .position_in_bits()
+            .map_err(|err| TonCellError::cell_parser_error(err.to_string()))?;
+        Ok(AnyCell {
+            cell: cell.clone(),
+            ref_index: *ref_index,
+            parser_positions_in_bits: position,
+        })
     }
 
     pub fn load_block_info(
@@ -1337,10 +1346,72 @@ impl Cell {
         ref_index: &mut usize,
         parser: &mut CellParser,
     ) -> Result<TransactionMessage, TonCellError> {
-        // FIXME: impl loadMaybe, loadEither and loadAny
         let mut tx_message = TransactionMessage::default();
         tx_message.hash = cell.get_hash(0);
         tx_message.info = Cell::load_common_msg_info(cell, ref_index, parser)?;
+
+        // init
+        cell.load_maybe(
+            ref_index,
+            parser,
+            Some(
+                |inner_cell: &Cell,
+                 inner_ref_index: &mut usize,
+                 inner_parser: &mut CellParser,
+                 _params: Option<_>| {
+                    Cell::load_either(
+                        inner_cell,
+                        inner_ref_index,
+                        inner_parser,
+                        |fx_cell: &Cell, fx_ref_index: &mut usize, fx_parser: &mut CellParser| {
+                            Cell::load_state_init(fx_cell, fx_ref_index, fx_parser)
+                        },
+                        |fy_cell: &Cell, fy_ref_index: &mut usize, _fy_parser: &mut CellParser| {
+                            let result = fy_cell.load_ref_if_exist(
+                                fy_ref_index,
+                                Some(|fy_inner_cell: &Cell,
+                                 fy_inner_ref_index: &mut usize,
+                                 fy_inner_parser: &mut CellParser| {
+                                    Cell::load_state_init(
+                                        fy_inner_cell,
+                                        fy_inner_ref_index,
+                                        fy_inner_parser,
+                                    )
+                                }),
+                            )?;
+                            Ok((result.0, result.1.map(|cell| cell.clone())))
+                        },
+                    )
+                },
+            ),
+            None::<u64>,
+        )?;
+
+        let body = Cell::load_either(
+            cell,
+            ref_index,
+            parser,
+            |fx_cell: &Cell, fx_ref_index: &mut usize, fx_parser: &mut CellParser| {
+                Cell::load_any(fx_cell, fx_ref_index, fx_parser)
+            },
+            |fy_cell: &Cell, fy_ref_index: &mut usize, _fy_parser: &mut CellParser| {
+                let result = fy_cell.load_ref_if_exist(
+                    fy_ref_index,
+                    Some(
+                        |fy_inner_cell: &Cell,
+                         fy_inner_ref_index: &mut usize,
+                         fy_inner_parser: &mut CellParser| {
+                            Cell::load_any(fy_inner_cell, fy_inner_ref_index, fy_inner_parser)
+                        },
+                    ),
+                )?;
+                Ok((result.0, result.1.map(|cell| cell.clone())))
+            },
+        )?;
+        tx_message.body = TransactionBody {
+            any: body.0,
+            cell_ref: body.1,
+        };
         Ok(tx_message)
     }
 
@@ -1460,6 +1531,87 @@ impl Cell {
             ));
         }
         Ok(ton_address)
+    }
+
+    pub fn load_state_init(
+        cell: &Cell,
+        ref_index: &mut usize,
+        parser: &mut CellParser,
+    ) -> Result<StateInitBuilder, TonCellError> {
+        let mut builder = StateInitBuilder::default();
+        let split_depth = cell.load_maybe(
+            ref_index,
+            parser,
+            Some(
+                |inner_cell: &Cell,
+                 inner_ref_index: &mut usize,
+                 inner_parser: &mut CellParser,
+                 params: Option<usize>| {
+                    inner_parser.load_uint(params.unwrap_or_default())
+                },
+            ),
+            Some(5usize),
+        )?;
+        builder.with_split_depth(if split_depth.unwrap_or_default() > BigUint::zero() {
+            true
+        } else {
+            false
+        });
+        // special / tick tock
+        cell.load_maybe(
+            ref_index,
+            parser,
+            Some(
+                |inner_cell: &Cell,
+                 inner_ref_index: &mut usize,
+                 inner_parser: &mut CellParser,
+                 params: Option<usize>| {
+                    inner_parser.load_bit()?;
+                    inner_parser.load_bit()?;
+                    Ok(())
+                },
+            ),
+            None,
+        )?;
+        // code
+        cell.load_maybe_ref(
+            ref_index,
+            parser,
+            Some(|_inner_cell: &Cell, _inner_ref: &mut usize, _parser: &mut CellParser| Ok(())),
+            None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<(), TonCellError>>,
+        )?;
+        // data
+        cell.load_maybe_ref(
+            ref_index,
+            parser,
+            Some(|_inner_cell: &Cell, _inner_ref: &mut usize, _parser: &mut CellParser| Ok(())),
+            None::<fn(&Cell, &mut usize, &mut CellParser) -> Result<(), TonCellError>>,
+        )?;
+
+        // library
+        cell.load_maybe(
+            ref_index,
+            parser,
+            Some(
+                |inner_cell: &Cell,
+                 inner_ref_index: &mut usize,
+                 inner_parser: &mut CellParser,
+                 _params: Option<usize>| {
+                    Cell::load_hash_map_e(
+                        inner_cell,
+                        inner_ref_index,
+                        inner_parser,
+                        256,
+                        |inner_cell: &Cell,
+                         _inner_ref_index: &mut usize,
+                         _inner_parser: &mut CellParser,
+                         _n: &BigUint| { Ok(Some(inner_cell.clone())) },
+                    )
+                },
+            ),
+            None,
+        )?;
+        Ok(builder)
     }
 
     pub fn load_hash_update(
