@@ -1,0 +1,22 @@
+[package]
+name = "tonlib-sys"
+version = "2024.6.0"
+edition = "2021"
+description = "Rust bindings for tonlibjson library"
+license = "MIT"
+authors = ["STON.fi"]
+repository = "https://github.com/ston-fi/tonlib-sys"
+include = [
+    "**/*.rs",
+    "Cargo.toml"
+]
+
+[features]
+default = ["cmake"]
+no_avx512 = []
+shared-tonlib = []
+
+[dependencies]
+
+[build-dependencies]
+cmake = { version = "0.1", optional = true }
