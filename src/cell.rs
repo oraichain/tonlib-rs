@@ -2111,7 +2111,7 @@ impl Cell {
         })
     }
 
-    fn load_buffer(&self, buffer: &mut Vec<u8>) -> Result<(), TonCellError> {
+    pub fn load_buffer(&self, buffer: &mut Vec<u8>) -> Result<(), TonCellError> {
         let mut cell: &Cell = self;
         loop {
             let mut parser = cell.parser();
