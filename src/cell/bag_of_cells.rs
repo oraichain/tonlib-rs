@@ -216,6 +216,8 @@ mod tests {
     use crate::message::ZERO_COINS;
     use crate::responses::ConfigParam;
 
+    use super::raw::CellType;
+
     #[test]
     fn cell_repr_works() -> anyhow::Result<()> {
         let hole_address = "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c".parse()?;
@@ -399,13 +401,15 @@ mod tests {
 
     #[test]
     fn it_constructs_raw() -> anyhow::Result<()> {
-        let leaf = CellBuilder::new().store_byte(10)?.build()?;
+        let leaf = CellBuilder::new()
+            .store_byte(CellType::PrunnedBranchCell as u8)?
+            .build()?;
         let inter = CellBuilder::new()
-            .store_byte(20)?
+            .store_byte(CellType::MerkleUpdateCell as u8)?
             .store_child(leaf)?
             .build()?;
         let root = CellBuilder::new()
-            .store_byte(30)?
+            .store_byte(CellType::MerkleProofCell as u8)?
             .store_child(inter)?
             .build()?;
         let boc = BagOfCells::from_root(root);

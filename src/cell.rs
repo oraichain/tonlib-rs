@@ -157,6 +157,7 @@ impl Cell {
                 return Ok(self.reference(0)?.get_level_mask()?
                     | self.reference(1)?.get_level_mask()? >> 1);
             }
+
             return Err(TonCellError::cell_parser_error("Unknown special cell type"));
         } else {
             let mut level_mask = 0;
