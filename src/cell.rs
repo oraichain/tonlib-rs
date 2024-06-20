@@ -609,6 +609,7 @@ impl Cell {
                 }
             }
             let remaining_bytes = parser.remaining_bytes();
+
             let mut data = parser.load_bytes(remaining_bytes)?;
             buffer.append(&mut data);
             match cell.references.len() {
@@ -2108,6 +2109,36 @@ impl Cell {
             info: block_info.0,
             extra: block_extra.0,
         })
+    }
+
+    fn load_buffer(&self, buffer: &mut Vec<u8>) -> Result<(), TonCellError> {
+        let mut cell: &Cell = self;
+        loop {
+            let mut parser = cell.parser();
+
+            if parser.remaining_bits() % 8 != 0 {
+                return Err(TonCellError::boc_deserialization_error(format!(
+                    "Invalid string length",
+                )));
+            }
+
+            let remaining_bytes = parser.remaining_bytes();
+
+            let mut data = parser.load_bytes(remaining_bytes)?;
+            buffer.append(&mut data);
+            match cell.references.len() {
+                0 => return Ok(()),
+                1 => {
+                    cell = cell.references[0].deref();
+                }
+                n => {
+                    return Err(TonCellError::boc_deserialization_error(format!(
+                        "Invalid format string: found cell with {} references",
+                        n
+                    )))
+                }
+            }
+        }
     }
 }
 
