@@ -58,6 +58,7 @@ dkms.conf
 *~
 
 # Rust build 
+!build
 Cargo.lock
 bindings/rust/target
 bindings/rust/blst
