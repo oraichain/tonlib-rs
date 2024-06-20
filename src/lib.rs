@@ -2,19 +2,32 @@ extern crate core;
 
 pub mod address;
 pub mod cell;
-// pub mod client;
-// pub mod config;
-// pub mod contract;
-// pub mod emulator;
+
 pub mod message;
-// pub mod meta;
-// pub mod mnemonic;
-// pub mod tl;
+
 pub mod hashmap;
-// pub mod types;
+
 pub mod responses;
-// pub mod wallet;
 
 #[doc = include_str!("../README.md")]
 #[cfg(doctest)]
 pub struct ReadmeDoctests;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod client;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod config;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod contract;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod emulator;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod meta;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod mnemonic;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod tl;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod types;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod wallet;

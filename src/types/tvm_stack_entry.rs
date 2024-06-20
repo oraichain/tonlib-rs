@@ -6,7 +6,7 @@ use num_bigint::{BigInt, BigUint};
 use strum::Display;
 
 use crate::address::TonAddress;
-use crate::cell::{ArcCell, BagOfCells, Cell, CellBuilder, CellSlice, DictLoader};
+use crate::cell::{ArcCell, BagOfCells, Cell, CellBuilder, CellSlice, CellType, DictLoader};
 use crate::tl::{TvmCell, TvmNumber, TvmSlice, TvmStackEntry as TlTvmStackEntry};
 use crate::types::StackParseError;
 
@@ -201,6 +201,7 @@ impl TryFrom<&String> for TvmStackEntry {
             bit_len,
             references: vec![],
             cell_type: bytes[0], // first byte is cell type
+            ..Default::default()
         };
         Ok(TvmStackEntry::Slice(CellSlice::full_cell(cell)?))
     }
