@@ -891,7 +891,7 @@ impl Cell {
         }
         let prev_seq_no = seq_no - 1;
         parser.load_shard_ident()?;
-        let gen_utime = parser.load_u32(32)?;
+        block_info.gen_utime = parser.load_u32(32)?;
         let start_lt = parser.load_u64(64)?;
         let end_lt = parser.load_u64(64)?;
         let gen_validator_list_hash_short = parser.load_u32(32)?;

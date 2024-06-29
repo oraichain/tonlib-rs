@@ -27,6 +27,7 @@ where
 
 #[derive(Clone, Debug, Default)]
 pub struct BlockInfo {
+    pub gen_utime: u32,
     pub prev_ref: BlkPrevRef,
 }
 
