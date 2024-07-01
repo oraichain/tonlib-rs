@@ -46,6 +46,13 @@ impl CellBuilder {
         Ok(self)
     }
 
+    pub fn store_u16(&mut self, bit_len: usize, val: u16) -> Result<&mut Self, TonCellError> {
+        self.bit_writer
+            .write(bit_len as u32, val)
+            .map_cell_builder_error()?;
+        Ok(self)
+    }
+
     pub fn store_u32(&mut self, bit_len: usize, val: u32) -> Result<&mut Self, TonCellError> {
         self.bit_writer
             .write(bit_len as u32, val)
