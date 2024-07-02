@@ -8,7 +8,7 @@ use crate::address::TonAddress;
 use crate::cell::error::{MapTonCellError, TonCellError};
 use crate::cell::{ArcCell, Cell, CellParser};
 
-use super::CellType;
+use super::{resolve_cell_type, CellType};
 
 const MAX_CELL_BITS: usize = 1023;
 const MAX_CELL_REFERENCES: usize = 4;
@@ -283,13 +283,9 @@ impl CellBuilder {
             }
             let d1 = vec[0];
             let level_mask = d1 >> 5;
-            let is_exotic = (d1 & 8) != 0;
+            let mut is_exotic = (d1 & 8) != 0;
             let has_hashes = (d1 & 16) != 0;
-            let cell_type = if is_exotic {
-                vec[0]
-            } else {
-                CellType::OrdinaryCell as u8
-            };
+            let cell_type = resolve_cell_type(&mut is_exotic, vec);
             Ok(Cell {
                 data: vec.to_vec(),
                 bit_len,
@@ -419,6 +415,20 @@ mod tests {
         let mut reader = cell.parser();
         let result = reader.load_address()?;
         assert_eq!(result, addr);
+        Ok(())
+    }
+
+    #[test]
+    fn write_number() -> anyhow::Result<()> {
+        let mut writer = CellBuilder::new();
+        let cell = writer.store_u32(32, 228966852)?.build()?;
+        assert_eq!(
+            cell.cell_hash().unwrap(),
+            vec![
+                114, 104, 161, 81, 66, 37, 36, 116, 114, 144, 225, 86, 229, 173, 193, 202, 1, 1,
+                75, 124, 43, 39, 185, 243, 240, 82, 110, 95, 17, 177, 5, 194
+            ]
+        );
         Ok(())
     }
 }

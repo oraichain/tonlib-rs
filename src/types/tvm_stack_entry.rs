@@ -6,7 +6,9 @@ use num_bigint::{BigInt, BigUint};
 use strum::Display;
 
 use crate::address::TonAddress;
-use crate::cell::{ArcCell, BagOfCells, Cell, CellBuilder, CellSlice, CellType, DictLoader};
+use crate::cell::{
+    resolve_cell_type, ArcCell, BagOfCells, Cell, CellBuilder, CellSlice, CellType, DictLoader,
+};
 use crate::tl::{TvmCell, TvmNumber, TvmSlice, TvmStackEntry as TlTvmStackEntry};
 use crate::types::StackParseError;
 
@@ -189,18 +191,14 @@ impl TryFrom<&String> for TvmStackEntry {
         let bytes = value.as_bytes().to_vec();
         let bit_len = bytes.len() * 8;
         let d1 = bytes[0];
-        let is_exotic = (d1 & 8) != 0;
-        let cell_type = if is_exotic {
-            bytes[0]
-        } else {
-            CellType::OrdinaryCell as u8
-        };
+        let mut is_exotic = (d1 & 8) != 0;
+        let cell_type = resolve_cell_type(&mut is_exotic, &bytes);
         // todo: support reference and snake format
         let cell = Cell {
             data: bytes.clone(),
             bit_len,
             references: vec![],
-            cell_type: bytes[0], // first byte is cell type
+            cell_type, // first byte is cell type
             ..Default::default()
         };
         Ok(TvmStackEntry::Slice(CellSlice::full_cell(cell)?))

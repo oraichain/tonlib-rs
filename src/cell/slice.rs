@@ -6,7 +6,7 @@ use bitstream_io::{BigEndian, BitRead, BitReader};
 use crate::cell::util::BitReadExt;
 use crate::cell::{ArcCell, Cell, CellBuilder, CellParser, MapTonCellError, TonCellError};
 
-use super::CellType;
+use super::{resolve_cell_type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellSlice {
@@ -146,13 +146,9 @@ impl CellSlice {
         bit_reader.read_bits(bit_len, data.as_mut_slice())?;
         let d1 = data[0];
         let level_mask = d1 >> 5;
-        let is_exotic = (d1 & 8) != 0;
+        let mut is_exotic = (d1 & 8) != 0;
         let has_hashes = (d1 & 16) != 0;
-        let cell_type = if is_exotic {
-            data[0]
-        } else {
-            CellType::OrdinaryCell as u8
-        };
+        let cell_type = resolve_cell_type(&mut is_exotic, &data);
         let cell = Cell {
             data,
             bit_len,
