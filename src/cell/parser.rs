@@ -83,6 +83,18 @@ impl CellParser<'_> {
             .map_cell_parser_error()
     }
 
+    pub fn load_u128(&mut self, bit_len: usize) -> Result<u128, TonCellError> {
+        self.bit_reader
+            .read::<u128>(bit_len as u32)
+            .map_cell_parser_error()
+    }
+
+    pub fn load_i128(&mut self, bit_len: usize) -> Result<i128, TonCellError> {
+        self.bit_reader
+            .read::<i128>(bit_len as u32)
+            .map_cell_parser_error()
+    }
+
     pub fn load_uint(&mut self, bit_len: usize) -> Result<BigUint, TonCellError> {
         let num_words = (bit_len + 31) / 32;
         let high_word_bits = if bit_len % 32 == 0 { 32 } else { bit_len % 32 };
